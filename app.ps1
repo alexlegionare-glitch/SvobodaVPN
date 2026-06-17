@@ -287,27 +287,66 @@ function Check-Ip {
     $ip=(& curl.exe -s -m 10 https://api.ipify.org) 2>$null
     if($ip){ $script:lblIp.Text="IP: $ip"; $script:lblIp.ForeColor=$cGreen } else { $script:lblIp.Text='IP: нет ответа'; $script:lblIp.ForeColor=$cRed }
 }
-# умное подключение: пробует активный сервер, при неудаче перебирает остальные
-function Auto-Connect {
-    $n=$script:state.profiles.Count
-    if($n -eq 0){ Connect-Vpn; Update-UI; return }
-    $script:lblStatus.Text='Подключаюсь…'; $script:lblStatus.ForeColor=$cAccent; $script:lblStatus.Refresh()
-    for($k=0;$k -lt $n;$k++){
-        $idx=([int]$script:state.active + $k) % $n
-        $script:state.active=$idx; if($script:cmb.SelectedIndex -ne $idx){ $script:cmb.SelectedIndex=$idx }
-        Write-SbConfig $script:state.profiles[$idx]
-        # ТСПУ ставит блок в момент хендшейка (>50% — ложные срабатывания): даём узлу 2 попытки переподключения, прежде чем считать его мёртвым
-        for($try=1;$try -le 2;$try++){
-            if($try -eq 2){ $script:lblStatus.Text='Переподключаюсь…'; $script:lblStatus.ForeColor=$cAccent; $script:lblStatus.Refresh() }
-            Disconnect-Vpn; Start-Sleep -Milliseconds 300
-            Start-Process -FilePath $exe -ArgumentList 'run','-c',$cfg -WorkingDirectory $root -WindowStyle Hidden
-            Start-Sleep -Seconds 4
-            $ip=(& curl.exe -s -m 8 https://api.ipify.org) 2>$null
-            if($ip){ Save-State $script:state; Update-UI; $script:lblIp.Text="через $($script:state.profiles[$idx].name)  ·  $ip"; $script:lblIp.ForeColor=$cGreen; return }
-        }
-    }
-    Disconnect-Vpn; Update-UI; $script:lblStatus.Text='Не удалось подключиться'; $script:lblStatus.ForeColor=$cRed
+# ── неблокирующее подключение: фоновый runspace делает паузу+curl, UI-таймер опрашивает и перебирает серверы (окно не зависает) ──
+$script:sync = [hashtable]::Synchronized(@{ checking=$false; ip='' })
+$script:connState = 'idle'
+function Cleanup-Check {
+    try { if($script:connPS){ $script:connPS.Dispose() } } catch {}
+    try { if($script:connRS){ $script:connRS.Close(); $script:connRS.Dispose() } } catch {}
+    $script:connPS=$null; $script:connRS=$null
 }
+function Start-Check {
+    $script:sync.checking=$true; $script:sync.ip=''
+    $script:connRS=[runspacefactory]::CreateRunspace(); $script:connRS.Open()
+    $script:connRS.SessionStateProxy.SetVariable('sync',$script:sync)
+    $script:connPS=[powershell]::Create(); $script:connPS.Runspace=$script:connRS
+    [void]$script:connPS.AddScript({
+        Start-Sleep -Seconds 4
+        $ip=''
+        for($i=0;$i -lt 4;$i++){ $r=(& curl.exe -s -m 6 https://api.ipify.org) 2>$null; if($r){ $ip="$r".Trim(); break }; Start-Sleep -Seconds 1 }
+        $sync.ip=$ip; $sync.checking=$false
+    })
+    [void]$script:connPS.BeginInvoke()
+}
+function Try-Server {
+    $idx=$script:connQueue[$script:connPos]
+    $script:state.active=$idx; if($script:cmb.SelectedIndex -ne $idx){ $script:cmb.SelectedIndex=$idx }
+    $script:lblStatus.Text=$(if($script:connAttempt -eq 1){'Подключаюсь…'}else{'Переподключаюсь…'}); $script:lblStatus.ForeColor=$cAccent
+    Write-SbConfig $script:state.profiles[$idx]
+    Disconnect-Vpn; Start-Sleep -Milliseconds 250
+    Start-Process -FilePath $exe -ArgumentList 'run','-c',$cfg -WorkingDirectory $root -WindowStyle Hidden
+    Start-Check
+}
+function Start-Connect {
+    if($script:connState -eq 'trying'){ return }
+    $n=$script:state.profiles.Count
+    if($n -eq 0){ [Windows.Forms.MessageBox]::Show('Сначала добавь сервер: «+ Добавить сервер» — вставь свою ссылку.','Свобода VPN','OK','Information'); return }
+    $a=[int]$script:state.active; if($a -lt 0 -or $a -ge $n){ $a=0 }
+    $script:connQueue=@($a) + @(0..($n-1) | Where-Object { $_ -ne $a })
+    $script:connPos=0; $script:connAttempt=1; $script:connState='trying'
+    $script:btnConn.Enabled=$false
+    Try-Server
+    $script:connTimer.Start()
+}
+$script:connTimer=New-Object Windows.Forms.Timer; $script:connTimer.Interval=400
+$script:connTimer.Add_Tick({
+    if($script:sync.checking){ return }
+    $idx=$script:connQueue[$script:connPos]
+    if($script:sync.ip){
+        $script:connTimer.Stop(); Cleanup-Check
+        Update-UI
+        $script:lblIp.Text="через $($script:state.profiles[$idx].name)  ·  $($script:sync.ip)"; $script:lblIp.ForeColor=$cGreen
+        $script:state | Add-Member -NotePropertyName everConnected -NotePropertyValue $true -Force; Save-State $script:state
+        $script:btnConn.Enabled=$true; $script:connState='idle'; return
+    }
+    Cleanup-Check
+    if($script:connAttempt -lt 2){ $script:connAttempt++; Try-Server; return }
+    $script:connPos++; $script:connAttempt=1
+    if($script:connPos -lt $script:connQueue.Count){ Try-Server; return }
+    $script:connTimer.Stop(); Disconnect-Vpn; Update-UI
+    $script:lblStatus.Text='Не удалось подключиться'; $script:lblStatus.ForeColor=$cRed
+    $script:btnConn.Enabled=$true; $script:connState='idle'
+})
 
 # ===================== EDITOR WINDOW (все настройки) =====================
 function Show-Editor {
@@ -405,7 +444,8 @@ $script:tray.ContextMenuStrip=$menu
 function Show-Window { $script:form.Show(); $script:form.WindowState='Normal'; $script:form.Activate() }
 
 $script:btnConn.Add_Click({
-    if(Is-Connected){ Disconnect-Vpn; Update-UI } else { Auto-Connect }
+    if($script:connState -eq 'trying'){ return }
+    if(Is-Connected){ Disconnect-Vpn; Update-UI } else { Start-Connect }
 })
 $btnMng.Add_Click({ Show-Editor })
 $btnSub.Add_Click({
@@ -451,16 +491,19 @@ $script:cmb.Add_SelectedIndexChanged({ if($script:cmb.SelectedIndex -ge 0){ $scr
 $script:form.Add_FormClosing({ param($s,$e) if(-not $script:exiting){ $e.Cancel=$true; $script:form.Hide() } })
 
 $miOpen.Add_Click({ Show-Window }); $script:tray.Add_MouseDoubleClick({ Show-Window })
-$miConn.Add_Click({ Connect-Vpn; Start-Sleep -Milliseconds 1600; Update-UI })
-$miDisc.Add_Click({ Disconnect-Vpn; Update-UI })
-$miExit.Add_Click({ $script:exiting=$true; Disconnect-Vpn; $script:tray.Visible=$false; [Windows.Forms.Application]::Exit() })
+$miConn.Add_Click({ if(-not (Is-Connected) -and $script:connState -ne 'trying'){ Start-Connect } })
+$miDisc.Add_Click({ $script:connTimer.Stop(); $script:connState='idle'; $script:btnConn.Enabled=$true; Disconnect-Vpn; Update-UI })
+$miExit.Add_Click({ $script:exiting=$true; try { $script:connTimer.Stop(); Cleanup-Check } catch {}; Disconnect-Vpn; $script:tray.Visible=$false; [Windows.Forms.Application]::Exit() })
 
 Fill-Combo; Update-UI; Apply-Mode
-$script:tray.ShowBalloonTip(3000,'Свобода VPN','Подключаюсь автоматически…',[Windows.Forms.ToolTipIcon]::Info)
-# авто-подключение при запуске (новичку ничего делать не надо)
-$script:startTimer=New-Object Windows.Forms.Timer; $script:startTimer.Interval=900
-$script:startTimer.Add_Tick({ $script:startTimer.Stop(); Auto-Connect })
-$script:startTimer.Start()
+# окно сразу на экране (закрытие = сворачивание в трей)
+$script:form.Show(); $script:form.Activate()
+# DECISION: авто-подключение ТОЛЬКО если уже подключались раньше — на первом запуске окно ждёт ручного нажатия
+if($script:state.everConnected -and $script:state.profiles.Count -gt 0){
+    $script:startTimer=New-Object Windows.Forms.Timer; $script:startTimer.Interval=500
+    $script:startTimer.Add_Tick({ $script:startTimer.Stop(); Start-Connect })
+    $script:startTimer.Start()
+}
 $ctx=New-Object Windows.Forms.ApplicationContext
 [Windows.Forms.Application]::Run($ctx)
 }
