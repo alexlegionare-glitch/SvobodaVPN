@@ -11,6 +11,6 @@
 !/setup.sh
 !/Установить.bat
 !/Удалить.bat
-!/page/
-/page/*
-!/page/index.html
+!/docs/
+/docs/*
+!/docs/index.html
