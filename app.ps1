@@ -1,52 +1,58 @@
-﻿# ===== Свобода VPN — трей-клиент (sing-box / VLESS no-SNI) =====
-# авто-запрос админ-прав (TUN требует админа), запуск скрыто
+﻿# ===== Свобода VPN — клиент (sing-box) =====
 $id = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$PSCommandPath
     exit
 }
 
-# DPI-aware — чёткий шрифт на масштабе 125/150% (без мыла)
-Add-Type @"
-using System.Runtime.InteropServices;
-public class DPI {
-  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-  [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
-}
-"@
-[void][DPI]::SetProcessDPIAware()
-
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-# множитель под DPI экрана (координаты в пикселях масштабируем, шрифты в пунктах сами)
-try { $script:scale=[DPI]::GetDpiForSystem()/96.0 } catch { $script:scale=1.0 }; if($script:scale -lt 1){ $script:scale=1.0 }
-function Px { param([int]$v) [int][math]::Round($v*$script:scale) }
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class W32 {
+public class Native {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
   [DllImport("user32.dll")] public static extern bool ReleaseCapture();
   [DllImport("user32.dll")] public static extern int SendMessage(IntPtr h, int m, int w, int l);
+  [DllImport("shell32.dll")] public static extern int SetCurrentProcessExplicitAppUserModelID([MarshalAs(UnmanagedType.LPWStr)] string id);
 }
 "@
+[void][Native]::SetProcessDPIAware()
+try { [void][Native]::SetCurrentProcessExplicitAppUserModelID('Svoboda.VPN') } catch {}
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+try { $script:scale=[Native]::GetDpiForSystem()/96.0 } catch { $script:scale=1.0 }; if($script:scale -lt 1){ $script:scale=1.0 }
+function Px { param([int]$v) [int][math]::Round($v*$script:scale) }
 
 $root     = Split-Path -Parent $PSCommandPath
 $cfg      = Join-Path $root 'sb-config.json'
 $exe      = Join-Path $root 'sing-box.exe'
 $profPath = Join-Path $root 'profiles.json'
+$icoFile  = Join-Path $root 'svoboda.ico'
 
-# --- стиль: светлый, индиго-акцент, slate ---
-$cBg=[Drawing.Color]::FromArgb(241,245,249); $cCard=[Drawing.Color]::White
-$cText=[Drawing.Color]::FromArgb(30,41,59); $cSub=[Drawing.Color]::FromArgb(100,116,139)
-$cAccent=[Drawing.Color]::FromArgb(79,70,229); $cGreen=[Drawing.Color]::FromArgb(22,163,74); $cRed=[Drawing.Color]::FromArgb(220,38,38)
-$cBtn2=[Drawing.Color]::FromArgb(238,242,255); $cBorder=[Drawing.Color]::FromArgb(226,232,240)
+# --- палитра: оранжево-серо-бело-чёрная ---
+$cSide      =[Drawing.Color]::FromArgb(32,33,36)
+$cSideHover =[Drawing.Color]::FromArgb(48,49,54)
+$cSideText  =[Drawing.Color]::FromArgb(168,170,176)
+$cBg        =[Drawing.Color]::White
+$cText      =[Drawing.Color]::FromArgb(24,24,27)
+$cSub       =[Drawing.Color]::FromArgb(92,94,100)
+$cAccent    =[Drawing.Color]::FromArgb(234,88,12)
+$cAccent2   =[Drawing.Color]::FromArgb(249,115,22)
+$cCard      =[Drawing.Color]::FromArgb(245,245,246)
+$cBorder    =[Drawing.Color]::FromArgb(224,224,228)
+$cGrey      =[Drawing.Color]::FromArgb(82,84,90)
+$white      =[Drawing.Color]::White
+$fFam='Segoe UI'
+
+function F { param([single]$sz,[string]$style='Regular') New-Object Drawing.Font($fFam,$sz,[Drawing.FontStyle]::$style) }
 
 function Write-TextNoBom($path,$text){ [IO.File]::WriteAllText($path,$text,(New-Object Text.UTF8Encoding($false))) }
 function Load-State { Get-Content $profPath -Raw -Encoding UTF8 | ConvertFrom-Json }
 function Save-State { param($s) Write-TextNoBom $profPath ($s | ConvertTo-Json -Depth 6) }
 $script:state = Load-State
+if(-not ($script:state.PSObject.Properties.Name -contains 'exclusions')){ $script:state | Add-Member -NotePropertyName exclusions -NotePropertyValue @() -Force }
 function Active-Profile { $script:state.profiles[$script:state.active] }
-
 function New-Profile { @{ name='';type='vless';server='';port=443;uuid='';password='';sni='';insecure=$true;fp='chrome';flow='';reality_pbk='';reality_sid='';transport='tcp';path='';host='';method='';obfs='';mux=$false;sub=$false } }
 function Pad-B64 { param($s) $s=$s.Replace('-','+').Replace('_','/'); switch($s.Length % 4){ 2{$s+='=='} 3{$s+='='} }; $s }
 function Parse-Query { param($q) $h=@{}; if($q){ foreach($pair in $q.Split('&')){ $kv=$pair.Split('=',2); if($kv.Count -eq 2){ $h[$kv[0]]=[Uri]::UnescapeDataString($kv[1]) } } }; $h }
@@ -83,12 +89,15 @@ function Build-Outbound { param($p)
     $ob.tag='proxy'; $ob
 }
 function Write-SbConfig { param($p)
+    $rules=@(@{ protocol='dns'; outbound='dns-out' })
+    $ex=@($script:state.exclusions) | Where-Object { "$_".Trim() }
+    if($ex.Count -gt 0){ $rules += @{ domain_suffix=@($ex); outbound='direct' } }
     $conf=[ordered]@{
         log=@{ level='warn'; output=(Join-Path $root 'sb_log.txt') }
         dns=@{ servers=@(@{ tag='remote'; address='1.1.1.1'; detour='proxy' }); final='remote'; strategy='ipv4_only' }
         inbounds=@(@{ type='tun'; tag='tun-in'; interface_name='SvobodaTun'; address=@('172.18.0.1/30'); mtu=1400; auto_route=$true; strict_route=$false; stack='gvisor'; sniff=$true })
         outbounds=@( (Build-Outbound $p), @{ type='direct'; tag='direct' }, @{ type='dns'; tag='dns-out' } )
-        route=@{ rules=@(@{ protocol='dns'; outbound='dns-out' }); auto_detect_interface=$true; final='proxy' }
+        route=@{ rules=$rules; auto_detect_interface=$true; final='proxy' }
     }
     Write-TextNoBom $cfg ($conf | ConvertTo-Json -Depth 10)
 }
@@ -105,6 +114,7 @@ function Parse-VpnLink { param($link)
         $net=$q['type']; if($net){ $p.transport=$net; if($net -eq 'grpc'){$p.path=$q['serviceName']} elseif($net -eq 'ws' -or $net -eq 'httpupgrade'){$p.path=$q['path']; $p.host=$q['host']} }
         if($q['allowInsecure'] -eq '1' -or $q['insecure'] -eq '1'){ $p.insecure=$true } else { $p.insecure=$false }
         if(-not $p.sni){ $p.insecure=$true }
+        if(-not $p.fp){ $p.fp='chrome' }
     }
     elseif($link -match '^(hysteria2|hy2)://'){
         $p.type='hysteria2'; $rest=$link -replace '^(hysteria2|hy2)://',''; $pass=$rest.Split('@')[0]; $hp=$rest.Split('@')[1]
@@ -144,15 +154,14 @@ function Parse-VpnLink { param($link)
         if("$($j.net)"){ $p.transport="$($j.net)" }; if("$($j.tls)" -eq 'tls'){ $p.insecure=$true }
         if("$($j.ps)"){ $name="$($j.ps)" }
     }
-    else { throw 'Неизвестный формат ссылки (vless/hysteria2/tuic/trojan/ss/vmess)' }
+    else { throw 'Неизвестный формат ссылки (vless / hysteria2 / tuic / trojan / ss / vmess)' }
     if(-not $name){ $name="$($p.type) $($p.server)" }
     $p.name=$name; [pscustomobject]$p
 }
-
 function Import-Subscription { param($url)
     $raw = (& curl.exe -s -m 25 -A 'Happ/1.0' "$url") 2>$null
     if(-not "$raw"){ throw 'подписка не ответила' }
-    $text = "$raw"
+    $text="$raw"
     try { $d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((Pad-B64 ($text.Trim() -replace '\s','')))); if($d -match '://'){ $text=$d } } catch {}
     $new=@()
     foreach($l in ($text -split "`n")){ $l=$l.Trim(); if($l -match '://'){ try { $np=Parse-VpnLink $l; $np.sub=$true; $new+=$np } catch {} } }
@@ -161,24 +170,26 @@ function Import-Subscription { param($url)
 }
 
 function Is-Connected { [bool](Get-Process sing-box -ErrorAction SilentlyContinue) }
-function Connect-Vpn {
-    if (Is-Connected) { return }
-    $ap = Active-Profile
-    if (-not $ap -or -not "$($ap.server)") { [Windows.Forms.MessageBox]::Show('Сначала добавь сервер: «⚙ Управление серверами» → вставь свою ссылку (vless / hysteria2 / ss / tuic / trojan / vmess).','Свобода VPN','OK','Information'); return }
-    Write-SbConfig $ap
-    Start-Process -FilePath $exe -ArgumentList 'run','-c',$cfg -WorkingDirectory $root -WindowStyle Hidden
-}
-function Disconnect-Vpn { Get-Process sing-box -ErrorAction SilentlyContinue | Stop-Process -Force }
+function Disconnect-Vpn { Get-Process sing-box -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }
 
-function New-DotIcon { param($color)
-    $bmp=New-Object Drawing.Bitmap 32,32
+# ── иконки ──
+function New-ShieldIcon { param($fill)
+    $s=32; $bmp=New-Object Drawing.Bitmap $s,$s
     $g=[Drawing.Graphics]::FromImage($bmp); $g.SmoothingMode='AntiAlias'; $g.Clear([Drawing.Color]::Transparent)
-    $g.FillEllipse((New-Object Drawing.SolidBrush $color),5,5,22,22); $g.Dispose()
-    [Drawing.Icon]::FromHandle($bmp.GetHicon())
+    $pts=@(
+        (New-Object Drawing.PointF([single](0.50*$s),[single](0.06*$s))),
+        (New-Object Drawing.PointF([single](0.88*$s),[single](0.20*$s))),
+        (New-Object Drawing.PointF([single](0.88*$s),[single](0.52*$s))),
+        (New-Object Drawing.PointF([single](0.50*$s),[single](0.95*$s))),
+        (New-Object Drawing.PointF([single](0.12*$s),[single](0.52*$s))),
+        (New-Object Drawing.PointF([single](0.12*$s),[single](0.20*$s)))
+    )
+    $g.FillPolygon((New-Object Drawing.SolidBrush $fill),[Drawing.PointF[]]$pts)
+    $pen=New-Object Drawing.Pen($white,[single]($s*0.10)); $pen.StartCap='Round'; $pen.EndCap='Round'; $pen.LineJoin='Round'
+    $g.DrawLines($pen,[Drawing.PointF[]]@((New-Object Drawing.PointF([single](0.34*$s),[single](0.50*$s))),(New-Object Drawing.PointF([single](0.45*$s),[single](0.62*$s))),(New-Object Drawing.PointF([single](0.66*$s),[single](0.37*$s)))))
+    $g.Dispose(); [Drawing.Icon]::FromHandle($bmp.GetHicon())
 }
-$icoOn=New-DotIcon $cGreen; $icoOff=New-DotIcon ([Drawing.Color]::FromArgb(120,120,140))
-
-# иконки в стиле Lucide (шрифт Segoe Fluent Icons)
+$icoOn=New-ShieldIcon $cAccent; $icoOff=New-ShieldIcon ([Drawing.Color]::FromArgb(130,132,138))
 function New-Glyph { param([int]$code,[int]$size,$color)
     try {
         $bmp=New-Object Drawing.Bitmap $size,$size
@@ -189,130 +200,154 @@ function New-Glyph { param([int]$code,[int]$size,$color)
         $g.Dispose(); $bmp
     } catch { $null }
 }
-
 function Set-RoundRegion { param($ctl,$radius)
-    $p=New-Object Drawing.Drawing2D.GraphicsPath
-    $d=$radius*2; $w=$ctl.Width; $h=$ctl.Height
-    $p.AddArc(0,0,$d,$d,180,90); $p.AddArc($w-$d,0,$d,$d,270,90)
-    $p.AddArc($w-$d,$h-$d,$d,$d,0,90); $p.AddArc(0,$h-$d,$d,$d,90,90); $p.CloseFigure()
+    $p=New-Object Drawing.Drawing2D.GraphicsPath; $d=$radius*2; $w=$ctl.Width; $h=$ctl.Height
+    $p.AddArc(0,0,$d,$d,180,90); $p.AddArc($w-$d,0,$d,$d,270,90); $p.AddArc($w-$d,$h-$d,$d,$d,0,90); $p.AddArc(0,$h-$d,$d,$d,90,90); $p.CloseFigure()
     $ctl.Region=New-Object Drawing.Region $p
 }
-function Flat-Button { param($b)
-    $b.FlatStyle='Flat'; $b.FlatAppearance.BorderSize=0; $b.ForeColor=[Drawing.Color]::White
-    $b.Font=New-Object Drawing.Font('Segoe UI',10,[Drawing.FontStyle]::Bold); $b.Cursor='Hand'
+function Flat { param($b,$bg,$fg) $b.FlatStyle='Flat'; $b.FlatAppearance.BorderSize=0; $b.BackColor=$bg; $b.ForeColor=$fg; $b.Font=(F 10 'Regular') }
+function Skin-List { param($lst)
+    $lst.DrawMode='OwnerDrawFixed'; $lst.ItemHeight=(Px 26); $lst.BorderStyle='FixedSingle'
+    $lst.Add_DrawItem({ param($s,$e)
+        $sel=(($e.State -band [Windows.Forms.DrawItemState]::Selected) -ne 0)
+        $bg=if($sel){ $cAccent } else { $white }; $fg=if($sel){ $white } else { $cText }
+        $e.Graphics.FillRectangle((New-Object Drawing.SolidBrush $bg),$e.Bounds)
+        if($e.Index -ge 0){ $e.Graphics.DrawString([string]$s.Items[$e.Index],$s.Font,(New-Object Drawing.SolidBrush $fg),([single]($e.Bounds.X+(Px 6))),([single]($e.Bounds.Y+(Px 4)))) }
+    })
 }
 
-try {
-# ===================== MAIN WINDOW =====================
+# ===================== ОКНО =====================
 $script:form=New-Object Windows.Forms.Form
 $script:form.FormBorderStyle='None'; $script:form.StartPosition='CenterScreen'; $script:form.AutoScaleMode='None'
-$script:form.Size=New-Object Drawing.Size((Px 460),(Px 548)); $script:form.BackColor=$cBg
-$script:form.ShowInTaskbar=$true; $script:form.Text='Свобода VPN'
-$icoFile=Join-Path $root 'svoboda.ico'; if(Test-Path $icoFile){ try { $script:form.Icon=New-Object Drawing.Icon $icoFile } catch {} }
-$semi=[Drawing.FontStyle]::Bold
-$dragH={ param($s,$e) if($e.Button -eq 'Left'){ [W32]::ReleaseCapture(); [W32]::SendMessage($script:form.Handle,0xA1,0x2,0) } }
+$script:form.Size=New-Object Drawing.Size((Px 880),(Px 600)); $script:form.BackColor=$cBg; $script:form.Text='Свобода VPN'; $script:form.ShowInTaskbar=$true
+if(Test-Path $icoFile){ try { $script:form.Icon=New-Object Drawing.Icon $icoFile } catch {} } else { try { $script:form.Icon=$icoOn } catch {} }
+$dragH={ param($s,$e) if($e.Button -eq 'Left'){ [Native]::ReleaseCapture(); [Native]::SendMessage($script:form.Handle,0xA1,0x2,0) } }
 
-# header (белый) с текстом-заголовком
-$hdr=New-Object Windows.Forms.Panel; $hdr.SetBounds(0,0,(Px 460),(Px 66)); $hdr.BackColor=$cCard
-$script:form.Controls.Add($hdr); $hdr.Add_MouseDown($dragH)
-$lblTitle=New-Object Windows.Forms.Label; $lblTitle.Text='Свобода ВПН'; $lblTitle.ForeColor=$cAccent
-$lblTitle.Font=New-Object Drawing.Font('Segoe UI Semibold',17,$semi); $lblTitle.SetBounds((Px 24),(Px 14),(Px 360),(Px 38)); $lblTitle.TextAlign='MiddleLeft'
-$hdr.Controls.Add($lblTitle); $lblTitle.Add_MouseDown($dragH)
-$btnMin=New-Object Windows.Forms.Button; $btnMin.Text='—'; $btnMin.SetBounds((Px 392),(Px 10),(Px 30),(Px 30)); Flat-Button $btnMin; $btnMin.BackColor=$cCard; $btnMin.ForeColor=$cSub; $btnMin.Font=New-Object Drawing.Font('Segoe UI',11)
-$btnClose=New-Object Windows.Forms.Button; $btnClose.Text='✕'; $btnClose.SetBounds((Px 424),(Px 10),(Px 30),(Px 30)); Flat-Button $btnClose; $btnClose.BackColor=$cCard; $btnClose.ForeColor=$cSub; $btnClose.Font=New-Object Drawing.Font('Segoe UI',11)
-$hdr.Controls.Add($btnMin); $hdr.Controls.Add($btnClose)
+# сайдбар
+$side=New-Object Windows.Forms.Panel; $side.SetBounds(0,0,(Px 220),(Px 600)); $side.BackColor=$cSide; $script:form.Controls.Add($side); $side.Add_MouseDown($dragH)
+$brand=New-Object Windows.Forms.Label; $brand.Text='  Свобода VPN'; $brand.ForeColor=$white; $brand.Font=(F 15 'Bold'); $brand.SetBounds((Px 16),(Px 22),(Px 200),(Px 34)); $brand.TextAlign='MiddleLeft'; $side.Controls.Add($brand); $brand.Add_MouseDown($dragH)
+$gShield=New-Glyph 0xE72E (Px 22) $cAccent  # запасной значок (lock)
 
-# статус
-$script:lblStatus=New-Object Windows.Forms.Label; $script:lblStatus.SetBounds(0,(Px 82),(Px 460),(Px 30)); $script:lblStatus.TextAlign='MiddleCenter'
-$script:lblStatus.Font=New-Object Drawing.Font('Segoe UI Semibold',14,$semi); $script:form.Controls.Add($script:lblStatus)
+# полоса активного пункта
+$navStrip=New-Object Windows.Forms.Panel; $navStrip.BackColor=$cAccent; $navStrip.SetBounds(0,(Px 80),(Px 4),(Px 48)); $side.Controls.Add($navStrip)
 
-# большая круглая кнопка с иконкой питания
-$script:btnConn=New-Object Windows.Forms.Button; $script:btnConn.SetBounds((Px 155),(Px 124),(Px 150),(Px 150))
-Flat-Button $script:btnConn; $script:btnConn.Font=New-Object Drawing.Font('Segoe UI Semibold',13,$semi)
+$script:nav=@{}; $script:panels=@{}
+$navDefs=@(@('home','Подключение',0xE701),@('servers','Серверы',0xE968),@('exclusions','Исключения',0xE71C),@('vk','VK-туннель',0xE717),@('settings','Настройки',0xE713))
+$ny=Px 80
+foreach($nd in $navDefs){
+    $b=New-Object Windows.Forms.Button; $b.Text='   '+$nd[1]; $b.SetBounds((Px 4),$ny,(Px 216),(Px 48))
+    $b.FlatStyle='Flat'; $b.FlatAppearance.BorderSize=0; $b.BackColor=$cSide; $b.ForeColor=$cSideText; $b.Font=(F 11 'Regular'); $b.TextAlign='MiddleLeft'
+    $b.TextImageRelation='ImageBeforeText'; $b.ImageAlign='MiddleLeft'; $b.Padding=New-Object Windows.Forms.Padding((Px 14),0,0,0)
+    $g=New-Glyph $nd[2] (Px 20) $cSideText; if($g){ $b.Image=$g }
+    $side.Controls.Add($b); $script:nav[$nd[0]]=$b
+    $ny += Px 50
+}
+
+# контент-область
+$cont=New-Object Windows.Forms.Panel; $cont.SetBounds((Px 220),0,(Px 660),(Px 600)); $cont.BackColor=$cBg; $script:form.Controls.Add($cont); $cont.Add_MouseDown($dragH)
+# кнопки окна
+$btnClose=New-Object Windows.Forms.Button; $btnClose.Text='✕'; $btnClose.SetBounds((Px 624),(Px 8),(Px 28),(Px 26)); Flat $btnClose $cBg $cSub; $btnClose.Font=(F 11 'Regular'); $cont.Controls.Add($btnClose)
+$btnMin=New-Object Windows.Forms.Button; $btnMin.Text='—'; $btnMin.SetBounds((Px 592),(Px 8),(Px 28),(Px 26)); Flat $btnMin $cBg $cSub; $btnMin.Font=(F 11 'Regular'); $cont.Controls.Add($btnMin)
+$btnClose.BringToFront(); $btnMin.BringToFront()
+
+function New-Panel {
+    $p=New-Object Windows.Forms.Panel; $p.SetBounds(0,(Px 44),(Px 660),(Px 556)); $p.BackColor=$cBg; $cont.Controls.Add($p); $p
+}
+function Title-Label { param($p,$text) $l=New-Object Windows.Forms.Label; $l.Text=$text; $l.ForeColor=$cText; $l.Font=(F 17 'Bold'); $l.SetBounds((Px 34),(Px 10),(Px 560),(Px 36)); $p.Controls.Add($l); $l }
+
+# ---------- HOME ----------
+$pHome=New-Panel; $script:panels['home']=$pHome
+[void](Title-Label $pHome 'Подключение')
+$script:lblStatus=New-Object Windows.Forms.Label; $script:lblStatus.SetBounds((Px 34),(Px 70),(Px 580),(Px 30)); $script:lblStatus.Font=(F 14 'Bold'); $script:lblStatus.TextAlign='MiddleCenter'; $pHome.Controls.Add($script:lblStatus)
+$script:btnConn=New-Object Windows.Forms.Button; $script:btnConn.SetBounds((Px 240),(Px 120),(Px 170),(Px 170)); $script:btnConn.FlatStyle='Flat'; $script:btnConn.FlatAppearance.BorderSize=0; $script:btnConn.ForeColor=$white; $script:btnConn.Font=(F 13 'Bold')
 $script:btnConn.TextImageRelation='ImageAboveText'; $script:btnConn.ImageAlign='MiddleCenter'; $script:btnConn.TextAlign='MiddleCenter'
-$gPow=New-Glyph 0xE7E8 (Px 44) ([Drawing.Color]::White); if($gPow){ $script:btnConn.Image=$gPow; $script:btnConn.Padding=New-Object Windows.Forms.Padding(0,(Px 18),0,0) }
-$script:form.Controls.Add($script:btnConn)
+$gPow=New-Glyph 0xE7E8 (Px 48) $white; if($gPow){ $script:btnConn.Image=$gPow; $script:btnConn.Padding=New-Object Windows.Forms.Padding(0,(Px 20),0,0) }
+$pHome.Controls.Add($script:btnConn)
+$script:lblSrv=New-Object Windows.Forms.Label; $script:lblSrv.SetBounds((Px 34),(Px 310),(Px 580),(Px 24)); $script:lblSrv.Font=(F 11 'Regular'); $script:lblSrv.ForeColor=$cText; $script:lblSrv.TextAlign='MiddleCenter'; $pHome.Controls.Add($script:lblSrv)
+$script:lblIp=New-Object Windows.Forms.Label; $script:lblIp.SetBounds((Px 34),(Px 336),(Px 580),(Px 22)); $script:lblIp.Font=(F 10 'Regular'); $script:lblIp.ForeColor=$cSub; $script:lblIp.TextAlign='MiddleCenter'; $pHome.Controls.Add($script:lblIp)
+$lnkSrv=New-Object Windows.Forms.Button; $lnkSrv.Text='Сменить сервер'; $lnkSrv.SetBounds((Px 255),(Px 372),(Px 140),(Px 30)); Flat $lnkSrv $cBg $cAccent; $lnkSrv.Font=(F 10 'Regular'); $pHome.Controls.Add($lnkSrv)
 
-# IP
-$script:lblIp=New-Object Windows.Forms.Label; $script:lblIp.SetBounds(0,(Px 288),(Px 460),(Px 22)); $script:lblIp.TextAlign='MiddleCenter'
-$script:lblIp.Font=New-Object Drawing.Font('Segoe UI',10); $script:lblIp.ForeColor=$cSub; $script:form.Controls.Add($script:lblIp)
+# ---------- SERVERS ----------
+$pSrv=New-Panel; $pSrv.Visible=$false; $script:panels['servers']=$pSrv
+[void](Title-Label $pSrv 'Серверы')
+$lI=New-Object Windows.Forms.Label; $lI.Text='Вставь ссылку (vless / hysteria2 / tuic / trojan / ss / vmess):'; $lI.ForeColor=$cSub; $lI.Font=(F 9 'Regular'); $lI.SetBounds((Px 34),(Px 56),(Px 580),(Px 16)); $pSrv.Controls.Add($lI)
+$script:tbImp=New-Object Windows.Forms.TextBox; $script:tbImp.SetBounds((Px 34),(Px 74),(Px 470),(Px 28)); $script:tbImp.BorderStyle='FixedSingle'; $script:tbImp.Font=(F 10 'Regular'); $script:tbImp.ForeColor=$cText; $pSrv.Controls.Add($script:tbImp)
+$bImp=New-Object Windows.Forms.Button; $bImp.Text='Добавить'; $bImp.SetBounds((Px 512),(Px 74),(Px 110),(Px 28)); Flat $bImp $cAccent $white; $bImp.Font=(F 10 'Bold'); $pSrv.Controls.Add($bImp)
+$script:lblSrvMsg=New-Object Windows.Forms.Label; $script:lblSrvMsg.SetBounds((Px 34),(Px 106),(Px 588),(Px 18)); $script:lblSrvMsg.Font=(F 9 'Regular'); $script:lblSrvMsg.ForeColor=$cSub; $pSrv.Controls.Add($script:lblSrvMsg)
+$script:lstSrv=New-Object Windows.Forms.ListBox; $script:lstSrv.SetBounds((Px 34),(Px 128),(Px 588),(Px 120)); $script:lstSrv.BorderStyle='FixedSingle'; $script:lstSrv.Font=(F 10 'Regular'); $script:lstSrv.ForeColor=$cText; $pSrv.Controls.Add($script:lstSrv); Skin-List $script:lstSrv
+$bUse=New-Object Windows.Forms.Button; $bUse.Text='Подключиться к выбранному'; $bUse.SetBounds((Px 34),(Px 256),(Px 280),(Px 34)); Flat $bUse $cAccent $white; $bUse.Font=(F 10 'Bold'); $pSrv.Controls.Add($bUse)
+$bDel=New-Object Windows.Forms.Button; $bDel.Text='Удалить'; $bDel.SetBounds((Px 324),(Px 256),(Px 130),(Px 34)); Flat $bDel $cCard $cText; $bDel.Font=(F 10 'Regular'); $pSrv.Controls.Add($bDel)
+# редактор (продвинутый)
+$script:edPanel=New-Object Windows.Forms.Panel; $script:edPanel.SetBounds((Px 34),(Px 300),(Px 600),(Px 250)); $script:edPanel.AutoScroll=$true; $script:edPanel.BackColor=$cBg; $pSrv.Controls.Add($script:edPanel)
+$script:fields=@{}; $script:combos=@{}; $py=0
+foreach($f in @(@('name','Название'),@('server','IP / домен'),@('port','Порт'),@('uuid','UUID (vless/vmess/tuic)'),@('password','Пароль (trojan/ss/hy2/tuic)'),@('sni','SNI (пусто = без SNI)'),@('reality_pbk','Reality pbk'),@('reality_sid','Reality sid'))){
+    $lb=New-Object Windows.Forms.Label; $lb.Text=$f[1]; $lb.ForeColor=$cSub; $lb.Font=(F 9 'Regular'); $lb.SetBounds((Px 2),$py,(Px 560),(Px 15)); $script:edPanel.Controls.Add($lb)
+    $tb=New-Object Windows.Forms.TextBox; $tb.SetBounds((Px 2),($py+(Px 16)),(Px 560),(Px 25)); $tb.BorderStyle='FixedSingle'; $tb.Font=(F 10 'Regular'); $tb.ForeColor=$cText; $script:edPanel.Controls.Add($tb)
+    $script:fields[$f[0]]=$tb; $py+=Px 46
+}
+foreach($cs in @(@('type','Протокол',@('vless','vmess','trojan','shadowsocks','hysteria2','tuic')),@('fp','uTLS отпечаток',@('','chrome','firefox','safari','edge','ios','random')),@('flow','Flow',@('','xtls-rprx-vision')),@('transport','Транспорт',@('tcp','grpc','ws','httpupgrade')),@('method','Метод (ss)',@('','2022-blake3-aes-256-gcm','aes-256-gcm','chacha20-ietf-poly1305')))){
+    $lb=New-Object Windows.Forms.Label; $lb.Text=$cs[1]; $lb.ForeColor=$cSub; $lb.Font=(F 9 'Regular'); $lb.SetBounds((Px 2),$py,(Px 560),(Px 15)); $script:edPanel.Controls.Add($lb)
+    $cb=New-Object Windows.Forms.ComboBox; $cb.SetBounds((Px 2),($py+(Px 16)),(Px 560),(Px 25)); $cb.DropDownStyle='DropDownList'; $cb.FlatStyle='Flat'; $cb.Font=(F 10 'Regular'); $cb.ForeColor=$cText; foreach($it in $cs[2]){ [void]$cb.Items.Add($it) }; $script:edPanel.Controls.Add($cb)
+    $script:combos[$cs[0]]=$cb; $py+=Px 46
+}
+$script:chkIns=New-Object Windows.Forms.CheckBox; $script:chkIns.Text='Не проверять сертификат (insecure)'; $script:chkIns.ForeColor=$cText; $script:chkIns.Font=(F 9 'Regular'); $script:chkIns.SetBounds((Px 2),$py,(Px 560),(Px 22)); $script:edPanel.Controls.Add($script:chkIns); $py+=Px 26
+$script:chkMux=New-Object Windows.Forms.CheckBox; $script:chkMux.Text='Mux — мультиплекс'; $script:chkMux.ForeColor=$cText; $script:chkMux.Font=(F 9 'Regular'); $script:chkMux.SetBounds((Px 2),$py,(Px 560),(Px 22)); $script:edPanel.Controls.Add($script:chkMux); $py+=Px 26
+$bSave=New-Object Windows.Forms.Button; $bSave.Text='Сохранить изменения'; $bSave.SetBounds((Px 2),$py,(Px 240),(Px 32)); Flat $bSave $cGrey $white; $bSave.Font=(F 10 'Bold'); $script:edPanel.Controls.Add($bSave)
 
-# выбор сервера
-$lblSrv=New-Object Windows.Forms.Label; $lblSrv.Text='Сервер'; $lblSrv.ForeColor=$cSub
-$lblSrv.Font=New-Object Drawing.Font('Segoe UI',10); $lblSrv.SetBounds((Px 28),(Px 322),(Px 200),(Px 18)); $script:form.Controls.Add($lblSrv)
-$script:cmb=New-Object Windows.Forms.ComboBox; $script:cmb.SetBounds((Px 28),(Px 344),(Px 404),(Px 36)); $script:cmb.DropDownStyle='DropDownList'
-$script:cmb.FlatStyle='Flat'; $script:cmb.BackColor=$cCard; $script:cmb.ForeColor=$cText
-$script:cmb.Font=New-Object Drawing.Font('Segoe UI',11); $script:form.Controls.Add($script:cmb)
+# ---------- EXCLUSIONS ----------
+$pEx=New-Panel; $pEx.Visible=$false; $script:panels['exclusions']=$pEx
+[void](Title-Label $pEx 'Исключения')
+$lE=New-Object Windows.Forms.Label; $lE.Text='Эти сайты пойдут НАПРЯМУЮ, в обход VPN (банки, госуслуги и т.п.). Указывай домен: gosuslugi.ru'; $lE.ForeColor=$cSub; $lE.Font=(F 9 'Regular'); $lE.SetBounds((Px 34),(Px 56),(Px 588),(Px 32)); $pEx.Controls.Add($lE)
+$script:tbEx=New-Object Windows.Forms.TextBox; $script:tbEx.SetBounds((Px 34),(Px 92),(Px 470),(Px 28)); $script:tbEx.BorderStyle='FixedSingle'; $script:tbEx.Font=(F 10 'Regular'); $script:tbEx.ForeColor=$cText; $pEx.Controls.Add($script:tbEx)
+$bExAdd=New-Object Windows.Forms.Button; $bExAdd.Text='Добавить'; $bExAdd.SetBounds((Px 512),(Px 92),(Px 110),(Px 28)); Flat $bExAdd $cAccent $white; $bExAdd.Font=(F 10 'Bold'); $pEx.Controls.Add($bExAdd)
+$script:lstEx=New-Object Windows.Forms.ListBox; $script:lstEx.SetBounds((Px 34),(Px 128),(Px 588),(Px 330)); $script:lstEx.BorderStyle='FixedSingle'; $script:lstEx.Font=(F 10 'Regular'); $script:lstEx.ForeColor=$cText; $pEx.Controls.Add($script:lstEx); Skin-List $script:lstEx
+$bExDel=New-Object Windows.Forms.Button; $bExDel.Text='Удалить выбранный'; $bExDel.SetBounds((Px 34),(Px 466),(Px 200),(Px 34)); Flat $bExDel $cCard $cText; $bExDel.Font=(F 10 'Regular'); $pEx.Controls.Add($bExDel)
 
-# кнопки с иконками
-$btnMng=New-Object Windows.Forms.Button; $btnMng.Text='Серверы'; $btnMng.SetBounds((Px 28),(Px 396),(Px 196),(Px 44))
-Flat-Button $btnMng; $btnMng.BackColor=$cBtn2; $btnMng.ForeColor=$cAccent; $btnMng.Font=New-Object Drawing.Font('Segoe UI Semibold',11,$semi)
-$btnMng.TextImageRelation='ImageBeforeText'; $g2=New-Glyph 0xE713 (Px 22) $cAccent; if($g2){ $btnMng.Image=$g2 }
-$script:form.Controls.Add($btnMng)
-$btnSub=New-Object Windows.Forms.Button; $btnSub.Text='Подписка'; $btnSub.SetBounds((Px 236),(Px 396),(Px 196),(Px 44))
-Flat-Button $btnSub; $btnSub.BackColor=$cBtn2; $btnSub.ForeColor=$cAccent; $btnSub.Font=New-Object Drawing.Font('Segoe UI Semibold',11,$semi)
-$btnSub.TextImageRelation='ImageBeforeText'; $g3=New-Glyph 0xE72C (Px 22) $cAccent; if($g3){ $btnSub.Image=$g3 }
-$script:form.Controls.Add($btnSub)
-$btnVk=New-Object Windows.Forms.Button; $btnVk.Text='VK-туннель — строгий белый список'; $btnVk.SetBounds((Px 28),(Px 454),(Px 404),(Px 46))
-Flat-Button $btnVk; $btnVk.BackColor=$cGreen; $btnVk.ForeColor=[Drawing.Color]::White; $btnVk.Font=New-Object Drawing.Font('Segoe UI Semibold',11,$semi)
-$btnVk.TextImageRelation='ImageBeforeText'; $g4=New-Glyph 0xE717 (Px 22) ([Drawing.Color]::White); if($g4){ $btnVk.Image=$g4 }
-$script:form.Controls.Add($btnVk)
-# Обычный режим: одна простая кнопка добавления сервера
-$btnAdd=New-Object Windows.Forms.Button; $btnAdd.Text='+  Добавить сервер (вставить ссылку)'; $btnAdd.SetBounds((Px 28),(Px 396),(Px 404),(Px 44))
-Flat-Button $btnAdd; $btnAdd.BackColor=$cBtn2; $btnAdd.ForeColor=$cAccent; $btnAdd.Font=New-Object Drawing.Font('Segoe UI Semibold',11,$semi)
-$script:form.Controls.Add($btnAdd)
-# переключатель режима
-$lblMode=New-Object Windows.Forms.Label; $lblMode.SetBounds((Px 28),(Px 508),(Px 404),(Px 24)); $lblMode.TextAlign='MiddleCenter'; $lblMode.ForeColor=$cAccent; $lblMode.Font=New-Object Drawing.Font('Segoe UI',9,[Drawing.FontStyle]::Underline); $lblMode.Cursor='Hand'
-$script:form.Controls.Add($lblMode)
-$script:form.Add_Shown({ Set-RoundRegion $script:form (Px 18); Set-RoundRegion $script:btnConn (Px 75); Set-RoundRegion $btnMng (Px 10); Set-RoundRegion $btnSub (Px 10); Set-RoundRegion $btnAdd (Px 10); Set-RoundRegion $btnVk (Px 12) })
+# ---------- VK ----------
+$pVk=New-Panel; $pVk.Visible=$false; $script:panels['vk']=$pVk
+[void](Title-Label $pVk 'VK-туннель')
+$lV=New-Object Windows.Forms.Label; $lV.Text='Резервный обход на случай, когда провайдер режет даже VLESS/Reality (строгий белый список).'+[Environment]::NewLine+'Использует отдельный модуль (PWDTT) — открывается в своём окне.'; $lV.ForeColor=$cSub; $lV.Font=(F 10 'Regular'); $lV.SetBounds((Px 34),(Px 60),(Px 588),(Px 60)); $pVk.Controls.Add($lV)
+$bVk=New-Object Windows.Forms.Button; $bVk.Text='Запустить VK-туннель'; $bVk.SetBounds((Px 34),(Px 130),(Px 240),(Px 38)); Flat $bVk $cAccent $white; $bVk.Font=(F 11 'Bold'); $pVk.Controls.Add($bVk)
+$script:lblVk=New-Object Windows.Forms.Label; $script:lblVk.SetBounds((Px 34),(Px 176),(Px 588),(Px 20)); $script:lblVk.Font=(F 9 'Regular'); $script:lblVk.ForeColor=$cSub; $pVk.Controls.Add($script:lblVk)
 
-function Fill-Combo {
-    $script:cmb.Items.Clear()
-    foreach($p in $script:state.profiles){ [void]$script:cmb.Items.Add($p.name) }
-    if($script:state.profiles.Count -gt 0){ $script:cmb.SelectedIndex=[int]$script:state.active }
-}
-function Update-UI {
-    if(Is-Connected){
-        $script:btnConn.Text='Отключить'; $script:btnConn.BackColor=$cGreen
-        $script:lblStatus.Text='● Защищено'; $script:lblStatus.ForeColor=$cGreen
-        $script:tray.Icon=$icoOn; $script:tray.Text='Свобода VPN — защищено'
-    } else {
-        $script:btnConn.Text='Подключить'; $script:btnConn.BackColor=$cAccent
-        $script:lblStatus.Text='● Не защищено'; $script:lblStatus.ForeColor=$cSub
-        $script:lblIp.Text=''; $script:tray.Icon=$icoOff; $script:tray.Text='Свобода VPN — отключено'
-    }
-}
-function Check-Ip {
-    $script:lblIp.Text='проверяю…'; $script:lblIp.ForeColor=$cSub; $script:lblIp.Refresh()
-    $ip=(& curl.exe -s -m 10 https://api.ipify.org) 2>$null
-    if($ip){ $script:lblIp.Text="IP: $ip"; $script:lblIp.ForeColor=$cGreen } else { $script:lblIp.Text='IP: нет ответа'; $script:lblIp.ForeColor=$cRed }
-}
-# ── неблокирующее подключение: фоновый runspace делает паузу+curl, UI-таймер опрашивает и перебирает серверы (окно не зависает) ──
-$script:sync = [hashtable]::Synchronized(@{ checking=$false; ip='' })
-$script:connState = 'idle'
-function Cleanup-Check {
-    try { if($script:connPS){ $script:connPS.Dispose() } } catch {}
-    try { if($script:connRS){ $script:connRS.Close(); $script:connRS.Dispose() } } catch {}
-    $script:connPS=$null; $script:connRS=$null
-}
+# ---------- SETTINGS ----------
+$pSet=New-Panel; $pSet.Visible=$false; $script:panels['settings']=$pSet
+[void](Title-Label $pSet 'Настройки')
+$lblMode2=New-Object Windows.Forms.Label; $lblMode2.Text='Режим интерфейса'; $lblMode2.ForeColor=$cText; $lblMode2.Font=(F 10 'Bold'); $lblMode2.SetBounds((Px 34),(Px 60),(Px 400),(Px 20)); $pSet.Controls.Add($lblMode2)
+$script:chkAdv=New-Object Windows.Forms.CheckBox; $script:chkAdv.Text='Продвинутый (показывать все настройки сервера)'; $script:chkAdv.ForeColor=$cText; $script:chkAdv.Font=(F 10 'Regular'); $script:chkAdv.SetBounds((Px 34),(Px 84),(Px 560),(Px 24)); $pSet.Controls.Add($script:chkAdv)
+$lblSub2=New-Object Windows.Forms.Label; $lblSub2.Text='Подписка (авто-обновление списка серверов)'; $lblSub2.ForeColor=$cText; $lblSub2.Font=(F 10 'Bold'); $lblSub2.SetBounds((Px 34),(Px 128),(Px 400),(Px 20)); $pSet.Controls.Add($lblSub2)
+$script:tbSub=New-Object Windows.Forms.TextBox; $script:tbSub.SetBounds((Px 34),(Px 152),(Px 470),(Px 28)); $script:tbSub.BorderStyle='FixedSingle'; $script:tbSub.Font=(F 10 'Regular'); $script:tbSub.ForeColor=$cText; $pSet.Controls.Add($script:tbSub)
+$bSub=New-Object Windows.Forms.Button; $bSub.Text='Обновить'; $bSub.SetBounds((Px 512),(Px 152),(Px 110),(Px 28)); Flat $bSub $cGrey $white; $bSub.Font=(F 10 'Bold'); $pSet.Controls.Add($bSub)
+$script:lblSubMsg=New-Object Windows.Forms.Label; $script:lblSubMsg.SetBounds((Px 34),(Px 184),(Px 588),(Px 18)); $script:lblSubMsg.Font=(F 9 'Regular'); $script:lblSubMsg.ForeColor=$cSub; $pSet.Controls.Add($script:lblSubMsg)
+$lblAbout=New-Object Windows.Forms.Label; $lblAbout.Text='Свобода VPN · движок sing-box · для личного использования. VPN автоматически включается при входе в Windows.'; $lblAbout.ForeColor=$cSub; $lblAbout.Font=(F 9 'Regular'); $lblAbout.SetBounds((Px 34),(Px 230),(Px 588),(Px 40)); $pSet.Controls.Add($lblAbout)
+
+# ── подключение (неблокирующее) ──
+$script:sync=[hashtable]::Synchronized(@{ checking=$false; ip='' })
+$script:connState='idle'
+function Cleanup-Check { try { if($script:connPS){ $script:connPS.Dispose() } } catch {}; try { if($script:connRS){ $script:connRS.Close(); $script:connRS.Dispose() } } catch {}; $script:connPS=$null; $script:connRS=$null }
 function Start-Check {
     $script:sync.checking=$true; $script:sync.ip=''
-    $script:connRS=[runspacefactory]::CreateRunspace(); $script:connRS.Open()
-    $script:connRS.SessionStateProxy.SetVariable('sync',$script:sync)
+    $script:connRS=[runspacefactory]::CreateRunspace(); $script:connRS.Open(); $script:connRS.SessionStateProxy.SetVariable('sync',$script:sync)
     $script:connPS=[powershell]::Create(); $script:connPS.Runspace=$script:connRS
-    [void]$script:connPS.AddScript({
-        Start-Sleep -Seconds 4
-        $ip=''
-        for($i=0;$i -lt 4;$i++){ $r=(& curl.exe -s -m 6 https://api.ipify.org) 2>$null; if($r){ $ip="$r".Trim(); break }; Start-Sleep -Seconds 1 }
-        $sync.ip=$ip; $sync.checking=$false
-    })
+    [void]$script:connPS.AddScript({ Start-Sleep -Seconds 4; $ip=''; for($i=0;$i -lt 4;$i++){ $r=(& curl.exe -s -m 6 https://api.ipify.org) 2>$null; if($r){ $ip="$r".Trim(); break }; Start-Sleep -Seconds 1 }; $sync.ip=$ip; $sync.checking=$false })
     [void]$script:connPS.BeginInvoke()
+}
+function Set-Status { param($text,$color) $script:lblStatus.Text=$text; $script:lblStatus.ForeColor=$color }
+function Update-UI {
+    if(Is-Connected -and $script:connState -ne 'trying'){
+        $script:btnConn.Text='Отключить'; $script:btnConn.BackColor=$cGrey
+        Set-Status '● Подключено' $cAccent; $script:tray.Icon=$icoOn; $script:tray.Text='Свобода VPN — подключено'
+    } elseif($script:connState -ne 'trying'){
+        $script:btnConn.Text='Подключить'; $script:btnConn.BackColor=$cAccent
+        Set-Status '● Отключено' $cSub; $script:lblIp.Text=''; $script:tray.Icon=$icoOff; $script:tray.Text='Свобода VPN — отключено'
+    }
 }
 function Try-Server {
     $idx=$script:connQueue[$script:connPos]
-    $script:state.active=$idx; if($script:cmb.SelectedIndex -ne $idx){ $script:cmb.SelectedIndex=$idx }
-    $script:lblStatus.Text=$(if($script:connAttempt -eq 1){'Подключаюсь…'}else{'Переподключаюсь…'}); $script:lblStatus.ForeColor=$cAccent
-    Write-SbConfig $script:state.profiles[$idx]
+    $script:state.active=$idx
+    $p=$script:state.profiles[$idx]; $script:lblSrv.Text=$p.name
+    Set-Status $(if($script:connAttempt -eq 1){'Подключаюсь…'}else{'Переподключаюсь…'}) $cAccent2
+    Write-SbConfig $p
     Disconnect-Vpn; Start-Sleep -Milliseconds 250
     Start-Process -FilePath $exe -ArgumentList 'run','-c',$cfg -WorkingDirectory $root -WindowStyle Hidden
     Start-Check
@@ -320,194 +355,125 @@ function Try-Server {
 function Start-Connect {
     if($script:connState -eq 'trying'){ return }
     $n=$script:state.profiles.Count
-    if($n -eq 0){ [Windows.Forms.MessageBox]::Show('Сначала добавь сервер: «+ Добавить сервер» — вставь свою ссылку.','Свобода VPN','OK','Information'); return }
+    if($n -eq 0){ Show-Panel 'servers'; $script:lblSrvMsg.Text='Сначала добавь сервер — вставь ссылку выше.'; $script:lblSrvMsg.ForeColor=$cAccent; return }
     $a=[int]$script:state.active; if($a -lt 0 -or $a -ge $n){ $a=0 }
-    $script:connQueue=@($a) + @(0..($n-1) | Where-Object { $_ -ne $a })
-    $script:connPos=0; $script:connAttempt=1; $script:connState='trying'
-    $script:btnConn.Enabled=$false
-    Try-Server
-    $script:connTimer.Start()
+    $script:connQueue=@($a)+@(0..($n-1)|Where-Object{$_ -ne $a}); $script:connPos=0; $script:connAttempt=1; $script:connState='trying'
+    $script:btnConn.Enabled=$false; $script:btnConn.Text='…'
+    Try-Server; $script:connTimer.Start()
 }
 $script:connTimer=New-Object Windows.Forms.Timer; $script:connTimer.Interval=400
 $script:connTimer.Add_Tick({
     if($script:sync.checking){ return }
     $idx=$script:connQueue[$script:connPos]
     if($script:sync.ip){
-        $script:connTimer.Stop(); Cleanup-Check
-        Update-UI
-        $script:lblIp.Text="через $($script:state.profiles[$idx].name)  ·  $($script:sync.ip)"; $script:lblIp.ForeColor=$cGreen
-        $script:state | Add-Member -NotePropertyName everConnected -NotePropertyValue $true -Force; Save-State $script:state
-        $script:btnConn.Enabled=$true; $script:connState='idle'; return
+        $script:connTimer.Stop(); Cleanup-Check; $script:connState='idle'; $script:btnConn.Enabled=$true; Update-UI
+        $script:lblIp.Text="IP: $($script:sync.ip)"; $script:lblIp.ForeColor=$cAccent
+        $script:state | Add-Member -NotePropertyName everConnected -NotePropertyValue $true -Force; Save-State $script:state; return
     }
     Cleanup-Check
     if($script:connAttempt -lt 2){ $script:connAttempt++; Try-Server; return }
     $script:connPos++; $script:connAttempt=1
     if($script:connPos -lt $script:connQueue.Count){ Try-Server; return }
-    $script:connTimer.Stop(); Disconnect-Vpn; Update-UI
-    $script:lblStatus.Text='Не удалось подключиться'; $script:lblStatus.ForeColor=$cRed
-    $script:btnConn.Enabled=$true; $script:connState='idle'
+    $script:connTimer.Stop(); $script:connState='idle'; Disconnect-Vpn; $script:btnConn.Enabled=$true; Update-UI
+    Set-Status 'Не удалось подключиться' $cAccent
 })
+function Do-Disconnect { $script:connTimer.Stop(); Cleanup-Check; $script:connState='idle'; $script:btnConn.Enabled=$true; Disconnect-Vpn; Start-Sleep -Milliseconds 200; $script:lblSrv.Text=''; Update-UI }
 
-# ===================== EDITOR WINDOW (все настройки) =====================
-function Show-Editor {
-    $ed=New-Object Windows.Forms.Form; $ed.FormBorderStyle='None'; $ed.StartPosition='CenterParent'; $ed.AutoScaleMode='None'
-    $ed.Size=New-Object Drawing.Size((Px 470),(Px 600)); $ed.BackColor=$cBg
-    $ed.Add_Shown({ Set-RoundRegion $ed (Px 16) })
-    $eh=New-Object Windows.Forms.Label; $eh.Text='  Серверы и настройки'; $eh.ForeColor=$cText
-    $eh.Font=New-Object Drawing.Font('Segoe UI Semibold',13,[Drawing.FontStyle]::Bold); $eh.SetBounds((Px 8),(Px 12),(Px 320),(Px 30)); $ed.Controls.Add($eh)
-    $eh.Add_MouseDown({ param($s,$e) if($e.Button -eq 'Left'){ [W32]::ReleaseCapture(); [W32]::SendMessage($ed.Handle,0xA1,0x2,0) } })
-    $bx=New-Object Windows.Forms.Button; $bx.Text='✕'; $bx.SetBounds((Px 426),(Px 10),(Px 30),(Px 30)); Flat-Button $bx; $bx.BackColor=$cBg; $bx.ForeColor=$cSub; $ed.Controls.Add($bx)
-
-    $lblImp=New-Object Windows.Forms.Label; $lblImp.Text='Вставь ссылку (vless / hysteria2 / ss / tuic / trojan / vmess):'; $lblImp.ForeColor=$cSub; $lblImp.Font=New-Object Drawing.Font('Segoe UI',9); $lblImp.SetBounds((Px 16),(Px 46),(Px 430),(Px 16)); $ed.Controls.Add($lblImp)
-    $tbImp=New-Object Windows.Forms.TextBox; $tbImp.SetBounds((Px 16),(Px 64),(Px 340),(Px 26)); $tbImp.BackColor=$cCard; $tbImp.ForeColor=$cText; $tbImp.BorderStyle='FixedSingle'; $tbImp.Font=New-Object Drawing.Font('Segoe UI',10); $ed.Controls.Add($tbImp)
-    $bImp=New-Object Windows.Forms.Button; $bImp.Text='Добавить'; $bImp.SetBounds((Px 364),(Px 64),(Px 90),(Px 26)); Flat-Button $bImp; $bImp.BackColor=$cGreen; $bImp.ForeColor=[Drawing.Color]::White; $bImp.Font=New-Object Drawing.Font('Segoe UI Semibold',9,[Drawing.FontStyle]::Bold); $ed.Controls.Add($bImp)
-
-    $lst=New-Object Windows.Forms.ListBox; $lst.SetBounds((Px 16),(Px 98),(Px 438),(Px 72)); $lst.BackColor=$cCard; $lst.ForeColor=$cText; $lst.BorderStyle='FixedSingle'; $lst.Font=New-Object Drawing.Font('Segoe UI',10); $ed.Controls.Add($lst)
-
-    # прокручиваемая панель со ВСЕМИ настройками
-    $pnl=New-Object Windows.Forms.Panel; $pnl.SetBounds((Px 12),(Px 178),(Px 446),(Px 350)); $pnl.AutoScroll=$true; $pnl.BackColor=$cBg; $ed.Controls.Add($pnl)
-    $fw=Px 414
-    $py=0
-    $fields=@{}
-    foreach($f in @(@('name','Название'),@('server','IP / домен'),@('port','Порт'),@('uuid','UUID (vless/vmess/tuic)'),@('password','Пароль (trojan/ss/hysteria2/tuic)'),@('sni','SNI (пусто = без SNI)'),@('reality_pbk','Reality Public Key (pbk)'),@('reality_sid','Reality Short ID (sid)'),@('path','Path / serviceName (ws/grpc)'),@('host','Host (ws)'),@('obfs','Obfs-пароль (hysteria2)'))){
-        $lb=New-Object Windows.Forms.Label; $lb.Text=$f[1]; $lb.ForeColor=$cSub; $lb.Font=New-Object Drawing.Font('Segoe UI',9); $lb.SetBounds((Px 4),$py,$fw,(Px 16)); $pnl.Controls.Add($lb)
-        $tb=New-Object Windows.Forms.TextBox; $tb.SetBounds((Px 4),($py+(Px 17)),$fw,(Px 26)); $tb.BackColor=$cCard; $tb.ForeColor=$cText; $tb.BorderStyle='FixedSingle'; $tb.Font=New-Object Drawing.Font('Segoe UI',10); $pnl.Controls.Add($tb)
-        $fields[$f[0]]=$tb; $py+=Px 48
-    }
-    $combos=@{}
-    foreach($cs in @(@('type','Протокол',@('vless','vmess','trojan','shadowsocks','hysteria2','tuic')),@('fp','uTLS отпечаток (маскировка)',@('','chrome','firefox','safari','edge','ios','random')),@('flow','Flow (vless+Reality)',@('','xtls-rprx-vision')),@('transport','Транспорт',@('tcp','grpc','ws','httpupgrade')),@('method','Метод (shadowsocks)',@('','2022-blake3-aes-256-gcm','aes-256-gcm','chacha20-ietf-poly1305')))){
-        $lb=New-Object Windows.Forms.Label; $lb.Text=$cs[1]; $lb.ForeColor=$cSub; $lb.Font=New-Object Drawing.Font('Segoe UI',9); $lb.SetBounds((Px 4),$py,$fw,(Px 16)); $pnl.Controls.Add($lb)
-        $cb=New-Object Windows.Forms.ComboBox; $cb.SetBounds((Px 4),($py+(Px 17)),$fw,(Px 26)); $cb.DropDownStyle='DropDownList'; $cb.FlatStyle='Flat'; $cb.BackColor=$cCard; $cb.ForeColor=$cText; $cb.Font=New-Object Drawing.Font('Segoe UI',10); foreach($it in $cs[2]){ [void]$cb.Items.Add($it) }; $pnl.Controls.Add($cb)
-        $combos[$cs[0]]=$cb; $py+=Px 48
-    }
-    $chkIns=New-Object Windows.Forms.CheckBox; $chkIns.Text='Не проверять сертификат (insecure)'; $chkIns.ForeColor=$cText; $chkIns.Font=New-Object Drawing.Font('Segoe UI',9); $chkIns.SetBounds((Px 4),$py,$fw,(Px 24)); $pnl.Controls.Add($chkIns); $py+=Px 28
-    $chkMux=New-Object Windows.Forms.CheckBox; $chkMux.Text='Mux — мультиплекс (иногда помогает обойти DPI)'; $chkMux.ForeColor=$cText; $chkMux.Font=New-Object Drawing.Font('Segoe UI',9); $chkMux.SetBounds((Px 4),$py,$fw,(Px 24)); $pnl.Controls.Add($chkMux); $py+=Px 28
-
-    $bNew=New-Object Windows.Forms.Button; $bNew.Text='Новый'; $bNew.SetBounds((Px 16),(Px 540),(Px 110),(Px 36)); Flat-Button $bNew; $bNew.BackColor=$cBtn2; $bNew.ForeColor=$cAccent
-    $bSave=New-Object Windows.Forms.Button; $bSave.Text='Сохранить'; $bSave.SetBounds((Px 136),(Px 540),(Px 190),(Px 36)); Flat-Button $bSave; $bSave.BackColor=$cAccent
-    $bDel=New-Object Windows.Forms.Button; $bDel.Text='Удалить'; $bDel.SetBounds((Px 336),(Px 540),(Px 118),(Px 36)); Flat-Button $bDel; $bDel.BackColor=$cRed
-    $ed.Controls.Add($bNew); $ed.Controls.Add($bSave); $ed.Controls.Add($bDel)
-
-    function Fill-List { $lst.Items.Clear(); foreach($p in $script:state.profiles){ [void]$lst.Items.Add($p.name) } }
-    function Fill-Fields { param($p)
-        foreach($k in @($fields.Keys)){ $fields[$k].Text="$($p.$k)" }
-        foreach($k in @($combos.Keys)){ $combos[$k].SelectedItem="$($p.$k)"; if($combos[$k].SelectedIndex -lt 0){ $combos[$k].SelectedIndex=0 } }
-        $chkIns.Checked=[bool]$p.insecure; $chkMux.Checked=[bool]$p.mux
-    }
-    function Read-Fields {
-        if($lst.SelectedIndex -ge 0){ $oldSub=[bool]$script:state.profiles[$lst.SelectedIndex].sub } else { $oldSub=$false }
-        $np=[pscustomobject](New-Profile)
-        foreach($k in @($fields.Keys)){ if($k -eq 'port'){ $np.port=[int]("0"+$fields['port'].Text) } else { $np.$k=$fields[$k].Text } }
-        foreach($k in @($combos.Keys)){ $np.$k="$($combos[$k].SelectedItem)" }
-        $np.insecure=$chkIns.Checked; $np.mux=$chkMux.Checked; $np.sub=$oldSub
-        if($np.port -le 0){ $np.port=443 }
-        $np
-    }
-    Fill-List
-    $lst.Add_SelectedIndexChanged({ if($lst.SelectedIndex -ge 0){ Fill-Fields $script:state.profiles[$lst.SelectedIndex] } })
-    $bNew.Add_Click({ $lst.ClearSelected(); Fill-Fields ([pscustomobject](New-Profile)); $fields['name'].Text='Новый сервер'; $fields['port'].Text='443' })
-    $bImp.Add_Click({
-        if(-not $tbImp.Text.Trim()){ return }
-        try {
-            $np=Parse-VpnLink $tbImp.Text
-            $arr=@($script:state.profiles); $arr+=$np; $script:state.profiles=$arr; $script:state.active=$arr.Count-1
-            Save-State $script:state; Fill-List; Fill-Combo; $tbImp.Text=''
-            [Windows.Forms.MessageBox]::Show("Добавлен: $($np.name)","Импорт",'OK','Information')
-        } catch { [Windows.Forms.MessageBox]::Show("Не удалось разобрать ссылку: $($_.Exception.Message)","Импорт",'OK','Warning') }
-    })
-    $bSave.Add_Click({
-        $np=Read-Fields
-        $arr=@($script:state.profiles)
-        if($lst.SelectedIndex -ge 0){ $arr[$lst.SelectedIndex]=$np } else { $arr+=$np }
-        $script:state.profiles=$arr; Save-State $script:state; Fill-List; Fill-Combo
-        [Windows.Forms.MessageBox]::Show("Сохранено: $($np.name)","Серверы",'OK','Information')
-    })
-    $bDel.Add_Click({
-        if($lst.SelectedIndex -ge 0 -and $script:state.profiles.Count -gt 1){
-            $i=$lst.SelectedIndex; $new=@()
-            for($k=0;$k -lt $script:state.profiles.Count;$k++){ if($k -ne $i){ $new+=$script:state.profiles[$k] } }
-            $script:state.profiles=$new
-            if([int]$script:state.active -ge $script:state.profiles.Count){ $script:state.active=0 }
-            Save-State $script:state; Fill-List; Fill-Combo
-        }
-    })
-    $bx.Add_Click({ $ed.Close() })
-    [void]$ed.ShowDialog($script:form)
+# ── списки ──
+function Fill-Servers { $script:lstSrv.Items.Clear(); foreach($p in $script:state.profiles){ [void]$script:lstSrv.Items.Add($p.name) }; if($script:state.profiles.Count -gt 0){ $i=[int]$script:state.active; if($i -ge 0 -and $i -lt $script:state.profiles.Count){ $script:lstSrv.SelectedIndex=$i } } }
+function Fill-Excl { $script:lstEx.Items.Clear(); foreach($d in @($script:state.exclusions)){ if("$d".Trim()){ [void]$script:lstEx.Items.Add($d) } } }
+function Fill-Editor { param($p)
+    foreach($k in @($script:fields.Keys)){ $script:fields[$k].Text="$($p.$k)" }
+    foreach($k in @($script:combos.Keys)){ $script:combos[$k].SelectedItem="$($p.$k)"; if($script:combos[$k].SelectedIndex -lt 0){ $script:combos[$k].SelectedIndex=0 } }
+    $script:chkIns.Checked=[bool]$p.insecure; $script:chkMux.Checked=[bool]$p.mux
 }
+function Apply-Mode { $adv=[bool]$script:state.advanced; $script:edPanel.Visible=$adv; $script:chkAdv.Checked=$adv }
 
-# ===================== TRAY =====================
+# ===================== ТРЕЙ =====================
 $script:tray=New-Object Windows.Forms.NotifyIcon; $script:tray.Icon=$icoOff; $script:tray.Visible=$true; $script:tray.Text='Свобода VPN'
 $menu=New-Object Windows.Forms.ContextMenuStrip
 $miOpen=$menu.Items.Add('Открыть'); $miConn=$menu.Items.Add('Подключить'); $miDisc=$menu.Items.Add('Отключить'); [void]$menu.Items.Add('-'); $miExit=$menu.Items.Add('Выход')
 $script:tray.ContextMenuStrip=$menu
-
 function Show-Window { $script:form.Show(); $script:form.WindowState='Normal'; $script:form.Activate() }
 
-$script:btnConn.Add_Click({
-    if($script:connState -eq 'trying'){ return }
-    if(Is-Connected){ Disconnect-Vpn; Update-UI } else { Start-Connect }
-})
-$btnMng.Add_Click({ Show-Editor })
-$btnSub.Add_Click({
-    Add-Type -AssemblyName Microsoft.VisualBasic
-    $cur = "$($script:state.subscription)"
-    $url = [Microsoft.VisualBasic.Interaction]::InputBox('Вставь URL подписки (sub-ссылка сервиса или своя) — серверы обновятся автоматически:','Подписка',$cur)
-    if(-not $url){ return }
-    try {
-        $subs = Import-Subscription $url
-        $manual = @($script:state.profiles | Where-Object { -not $_.sub })
-        $script:state.profiles = @($manual + $subs)
-        $script:state | Add-Member -NotePropertyName subscription -NotePropertyValue $url -Force
-        $script:state.active = 0
-        Save-State $script:state; Fill-Combo; Update-UI
-        [Windows.Forms.MessageBox]::Show("Загружено серверов из подписки: $($subs.Count)",'Подписка','OK','Information')
-    } catch { [Windows.Forms.MessageBox]::Show("Ошибка подписки: $($_.Exception.Message)",'Подписка','OK','Warning') }
-})
-$btnVk.Add_Click({
-    $pw = Join-Path $root 'PWDTT.exe'
-    if (-not (Test-Path $pw)) { [Windows.Forms.MessageBox]::Show('Модуль VK-туннеля (PWDTT.exe) не найден рядом с приложением.','VK-туннель','OK','Warning'); return }
-    try { Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$pw`"" }
-    catch {
-        try { [System.Diagnostics.Process]::Start($pw) | Out-Null }
-        catch { [Windows.Forms.MessageBox]::Show("Не удалось запустить VK-модуль:`n$($_.Exception.Message)",'VK-туннель','OK','Warning') }
-    }
-})
-$btnAdd.Add_Click({
-    Add-Type -AssemblyName Microsoft.VisualBasic
-    $link=[Microsoft.VisualBasic.Interaction]::InputBox('Вставь ссылку сервера (vless:// и т.д.) — её выдаёт твой VPS после настройки:','Добавить сервер','')
-    if(-not $link){ return }
-    try { $np=Parse-VpnLink $link; $arr=@($script:state.profiles); $arr+=$np; $script:state.profiles=$arr; $script:state.active=$arr.Count-1; Save-State $script:state; Fill-Combo; Update-UI; [Windows.Forms.MessageBox]::Show("Добавлен сервер: $($np.name).`nНажми большую кнопку, чтобы подключиться.",'Сервер','OK','Information') }
-    catch { [Windows.Forms.MessageBox]::Show("Не получилось разобрать ссылку:`n$($_.Exception.Message)",'Сервер','OK','Warning') }
-})
-function Apply-Mode {
-    $adv=[bool]$script:state.advanced
-    $btnMng.Visible=$adv; $btnSub.Visible=$adv; $btnAdd.Visible=(-not $adv)
-    if($adv){ $lblMode.Text='← обычный режим (проще)' } else { $lblMode.Text='⚙ продвинутый режим (все настройки)' }
+function Show-Panel { param($name)
+    foreach($n in @('home','servers','exclusions','vk','settings')){ if($script:panels[$n]){ $script:panels[$n].Visible=($n -eq $name) } }
+    foreach($n in $script:nav.Keys){ if($n -eq $name){ $script:nav[$n].BackColor=$cSideHover; $script:nav[$n].ForeColor=$white } else { $script:nav[$n].BackColor=$cSide; $script:nav[$n].ForeColor=$cSideText } }
+    if($script:nav[$name]){ $navStrip.Top=$script:nav[$name].Top; $navStrip.Visible=$true }
+    if($name -eq 'servers'){ Fill-Servers; Apply-Mode }
+    if($name -eq 'exclusions'){ Fill-Excl }
+    if($name -eq 'home'){ Update-UI; if($script:state.profiles.Count -gt 0 -and -not $script:lblSrv.Text){ $i=[int]$script:state.active; if($i -ge 0 -and $i -lt $script:state.profiles.Count){ $script:lblSrv.Text=$script:state.profiles[$i].name } } }
 }
-$lblMode.Add_Click({ $cur=[bool]$script:state.advanced; $script:state | Add-Member -NotePropertyName advanced -NotePropertyValue (-not $cur) -Force; Save-State $script:state; Apply-Mode })
+
+# ===================== ОБРАБОТЧИКИ =====================
+foreach($n in @('home','servers','exclusions','vk','settings')){ $nn=$n; $script:nav[$n].Add_Click({ Show-Panel $nn }.GetNewClosure()) }
 $btnMin.Add_Click({ $script:form.Hide() })
 $btnClose.Add_Click({ $script:form.Hide() })
-$script:cmb.Add_SelectedIndexChanged({ if($script:cmb.SelectedIndex -ge 0){ $script:state.active=$script:cmb.SelectedIndex; Save-State $script:state } })
-$script:form.Add_FormClosing({ param($s,$e) if(-not $script:exiting){ $e.Cancel=$true; $script:form.Hide() } })
+$lnkSrv.Add_Click({ Show-Panel 'servers' })
+$script:btnConn.Add_Click({ if($script:connState -eq 'trying'){ return }; if(Is-Connected){ Do-Disconnect } else { Start-Connect } })
+
+$bImp.Add_Click({
+    $t=$script:tbImp.Text.Trim(); if(-not $t){ return }
+    try { $np=Parse-VpnLink $t; $arr=@($script:state.profiles); $arr+=$np; $script:state.profiles=$arr; $script:state.active=$arr.Count-1; Save-State $script:state; $script:tbImp.Text=''; Fill-Servers; $script:lblSrvMsg.Text="Добавлен: $($np.name)"; $script:lblSrvMsg.ForeColor=$cAccent }
+    catch { $script:lblSrvMsg.Text="Не разобрал ссылку: $($_.Exception.Message)"; $script:lblSrvMsg.ForeColor=$cAccent }
+})
+$script:lstSrv.Add_SelectedIndexChanged({ if($script:lstSrv.SelectedIndex -ge 0){ $script:state.active=$script:lstSrv.SelectedIndex; Save-State $script:state; Fill-Editor $script:state.profiles[$script:lstSrv.SelectedIndex] } })
+$bUse.Add_Click({ if($script:lstSrv.SelectedIndex -ge 0){ $script:state.active=$script:lstSrv.SelectedIndex; Save-State $script:state }; Show-Panel 'home'; Start-Connect })
+$bDel.Add_Click({
+    $i=$script:lstSrv.SelectedIndex; if($i -lt 0){ return }
+    $new=@(); for($k=0;$k -lt $script:state.profiles.Count;$k++){ if($k -ne $i){ $new+=$script:state.profiles[$k] } }
+    $script:state.profiles=$new; if([int]$script:state.active -ge $new.Count){ $script:state.active=0 }; Save-State $script:state; Fill-Servers; $script:lblSrvMsg.Text='Удалён.'; $script:lblSrvMsg.ForeColor=$cSub
+})
+$bSave.Add_Click({
+    $i=$script:lstSrv.SelectedIndex
+    $np=[pscustomobject](New-Profile)
+    foreach($k in @($script:fields.Keys)){ if($k -eq 'port'){ $np.port=[int]("0"+$script:fields['port'].Text) } else { $np.$k=$script:fields[$k].Text } }
+    foreach($k in @($script:combos.Keys)){ $np.$k="$($script:combos[$k].SelectedItem)" }
+    $np.insecure=$script:chkIns.Checked; $np.mux=$script:chkMux.Checked
+    if($np.port -le 0){ $np.port=443 }
+    $arr=@($script:state.profiles); if($i -ge 0){ $np.sub=[bool]$arr[$i].sub; $arr[$i]=$np } else { $arr+=$np }
+    $script:state.profiles=$arr; Save-State $script:state; Fill-Servers; $script:lblSrvMsg.Text="Сохранено: $($np.name)"; $script:lblSrvMsg.ForeColor=$cAccent
+})
+$bExAdd.Add_Click({
+    $d=$script:tbEx.Text.Trim() -replace '^https?://','' -replace '/.*$',''
+    if(-not $d){ return }
+    $ex=@(@($script:state.exclusions) + $d | Where-Object { "$_".Trim() } | Select-Object -Unique)
+    $script:state.exclusions=$ex; Save-State $script:state; $script:tbEx.Text=''; Fill-Excl
+    if(Is-Connected){ Write-SbConfig (Active-Profile) }
+})
+$bExDel.Add_Click({
+    $i=$script:lstEx.SelectedIndex; if($i -lt 0){ return }
+    $ex=@($script:state.exclusions); $new=@(); for($k=0;$k -lt $ex.Count;$k++){ if($k -ne $i){ $new+=$ex[$k] } }
+    $script:state.exclusions=$new; Save-State $script:state; Fill-Excl
+})
+$bVk.Add_Click({
+    $pw=Join-Path $root 'PWDTT.exe'
+    if(-not (Test-Path $pw)){ $script:lblVk.Text='Модуль PWDTT.exe не найден рядом с приложением.'; $script:lblVk.ForeColor=$cAccent; return }
+    try { Start-Process -FilePath $pw } catch { try { Start-Process explorer.exe -ArgumentList "`"$pw`"" } catch { $script:lblVk.Text="Не удалось запустить: $($_.Exception.Message)"; $script:lblVk.ForeColor=$cAccent; return } }
+    $script:lblVk.Text='VK-туннель запущен (отдельное окно модуля).'; $script:lblVk.ForeColor=$cSub
+})
+$script:chkAdv.Add_CheckedChanged({ $script:state | Add-Member -NotePropertyName advanced -NotePropertyValue ([bool]$script:chkAdv.Checked) -Force; Save-State $script:state; Apply-Mode })
+$bSub.Add_Click({
+    $url=$script:tbSub.Text.Trim(); if(-not $url){ return }
+    try { $subs=Import-Subscription $url; $manual=@($script:state.profiles | Where-Object { -not $_.sub }); $script:state.profiles=@($manual+$subs); $script:state | Add-Member -NotePropertyName subscription -NotePropertyValue $url -Force; $script:state.active=0; Save-State $script:state; $script:lblSubMsg.Text="Загружено серверов: $($subs.Count)"; $script:lblSubMsg.ForeColor=$cAccent }
+    catch { $script:lblSubMsg.Text="Ошибка: $($_.Exception.Message)"; $script:lblSubMsg.ForeColor=$cAccent }
+})
 
 $miOpen.Add_Click({ Show-Window }); $script:tray.Add_MouseDoubleClick({ Show-Window })
 $miConn.Add_Click({ if(-not (Is-Connected) -and $script:connState -ne 'trying'){ Start-Connect } })
-$miDisc.Add_Click({ $script:connTimer.Stop(); $script:connState='idle'; $script:btnConn.Enabled=$true; Disconnect-Vpn; Update-UI })
+$miDisc.Add_Click({ Do-Disconnect })
 $miExit.Add_Click({ $script:exiting=$true; try { $script:connTimer.Stop(); Cleanup-Check } catch {}; Disconnect-Vpn; $script:tray.Visible=$false; [Windows.Forms.Application]::Exit() })
+$script:form.Add_FormClosing({ param($s,$e) if(-not $script:exiting){ $e.Cancel=$true; $script:form.Hide() } })
 
-Fill-Combo; Update-UI; Apply-Mode
-# окно сразу на экране (закрытие = сворачивание в трей)
+$script:form.Add_Shown({ Set-RoundRegion $script:btnConn (Px 18) })
+if("$($script:state.subscription)"){ $script:tbSub.Text="$($script:state.subscription)" }
+Show-Panel 'home'
 $script:form.Show(); $script:form.Activate()
-# DECISION: авто-подключение ТОЛЬКО если уже подключались раньше — на первом запуске окно ждёт ручного нажатия
+# первый запуск — без авто-подключения; на последующих, если уже подключался
 if($script:state.everConnected -and $script:state.profiles.Count -gt 0){
-    $script:startTimer=New-Object Windows.Forms.Timer; $script:startTimer.Interval=500
+    $script:startTimer=New-Object Windows.Forms.Timer; $script:startTimer.Interval=600
     $script:startTimer.Add_Tick({ $script:startTimer.Stop(); Start-Connect })
     $script:startTimer.Start()
 }
 $ctx=New-Object Windows.Forms.ApplicationContext
 [Windows.Forms.Application]::Run($ctx)
-}
-catch {
-    $_ | Out-File (Join-Path $root 'gui_error.txt') -Encoding UTF8
-    [Windows.Forms.MessageBox]::Show("Ошибка: $($_.Exception.Message)","Свобода VPN",'OK','Error')
-}

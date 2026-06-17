@@ -6,6 +6,8 @@ AppPublisher=Svoboda VPN
 DefaultDirName={autopf}\SvobodaVPN
 DefaultGroupName=Свобода VPN
 DisableProgramGroupPage=yes
+DisableWelcomePage=yes
+DisableReadyPage=yes
 DisableDirPage=auto
 UninstallDisplayIcon={app}\svoboda.ico
 UninstallDisplayName=Свобода VPN
@@ -20,9 +22,6 @@ WizardStyle=modern
 
 [Languages]
 Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
-
-[Tasks]
-Name: "autostart"; Description: "Запускать «Свобода VPN» при входе в Windows"; GroupDescription: "Дополнительно:"
 
 [Files]
 Source: "app.ps1";               DestDir: "{app}"; Flags: ignoreversion
@@ -39,7 +38,7 @@ Name: "{group}\Свобода VPN";         Filename: "powershell.exe"; Paramete
 Name: "{group}\Удалить Свобода VPN";  Filename: "{uninstallexe}"
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register-autostart.ps1"""; Flags: runhidden waituntilterminated; Tasks: autostart
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register-autostart.ps1"""; Flags: runhidden waituntilterminated
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\app.ps1"""; Description: "Запустить «Свобода VPN»"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
