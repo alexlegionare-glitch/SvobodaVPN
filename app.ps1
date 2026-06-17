@@ -1,7 +1,9 @@
 ﻿# ===== Свобода VPN — клиент (sing-box) =====
 $id = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$PSCommandPath
+    $vbs = Join-Path (Split-Path -Parent $PSCommandPath) 'run.vbs'
+    if (Test-Path $vbs) { Start-Process wscript.exe -Verb RunAs -ArgumentList ('"'+$vbs+'"') }
+    else { Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$PSCommandPath }
     exit
 }
 
@@ -19,6 +21,7 @@ public class Native {
   [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int idx, int val);
   [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int ht, bool repaint);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll", CharSet=CharSet.Auto)] public static extern IntPtr LoadImage(IntPtr hinst, IntPtr name, uint type, int cx, int cy, uint fuLoad);
 }
 "@
 [void][Native]::SetProcessDPIAware()
@@ -34,6 +37,9 @@ public class ShadowForm : Form {
 "@
 try { $script:scale=[Native]::GetDpiForSystem()/96.0 } catch { $script:scale=1.0 }; if($script:scale -lt 1){ $script:scale=1.0 }
 function Px { param([int]$v) [int][math]::Round($v*$script:scale) }
+# курсор-рука нужного размера под DPI (стоковый Cursors.Hand на system-aware рендерится крошечным)
+$script:curHand=[Windows.Forms.Cursors]::Hand
+try { $hc=[Native]::LoadImage([IntPtr]::Zero,[IntPtr]32649,2,[int](32*$script:scale),[int](32*$script:scale),0); if($hc -ne [IntPtr]::Zero){ $script:curHand=New-Object Windows.Forms.Cursor $hc } } catch {}
 
 $root     = Split-Path -Parent $PSCommandPath
 $cfg      = Join-Path $root 'sb-config.json'
@@ -216,7 +222,7 @@ function Set-RoundRegion { param($ctl,$radius)
     $p.AddArc(0,0,$d,$d,180,90); $p.AddArc($w-$d,0,$d,$d,270,90); $p.AddArc($w-$d,$h-$d,$d,$d,0,90); $p.AddArc(0,$h-$d,$d,$d,90,90); $p.CloseFigure()
     $ctl.Region=New-Object Drawing.Region $p
 }
-function Flat { param($b,$bg,$fg) $b.FlatStyle='Flat'; $b.FlatAppearance.BorderSize=0; $b.BackColor=$bg; $b.ForeColor=$fg; $b.Font=(F 10 'Regular'); $b.Cursor=[Windows.Forms.Cursors]::Hand }
+function Flat { param($b,$bg,$fg) $b.FlatStyle='Flat'; $b.FlatAppearance.BorderSize=0; $b.BackColor=$bg; $b.ForeColor=$fg; $b.Font=(F 10 'Regular'); $b.Cursor=$script:curHand }
 function Skin-List { param($lst)
     $lst.DrawMode='OwnerDrawFixed'; $lst.ItemHeight=(Px 26); $lst.BorderStyle='FixedSingle'
     $lst.Add_DrawItem({ param($s,$e)
@@ -248,7 +254,7 @@ $ny=Px 80
 foreach($nd in $navDefs){
     $b=New-Object Windows.Forms.Button; $b.Text='   '+$nd[1]; $b.SetBounds((Px 4),$ny,(Px 216),(Px 48))
     $b.FlatStyle='Flat'; $b.FlatAppearance.BorderSize=0; $b.BackColor=$cSide; $b.ForeColor=$cSideText; $b.Font=(F 11 'Regular'); $b.TextAlign='MiddleLeft'
-    $b.TextImageRelation='ImageBeforeText'; $b.ImageAlign='MiddleLeft'; $b.Padding=New-Object Windows.Forms.Padding((Px 14),0,0,0); $b.Cursor=[Windows.Forms.Cursors]::Hand
+    $b.TextImageRelation='ImageBeforeText'; $b.ImageAlign='MiddleLeft'; $b.Padding=New-Object Windows.Forms.Padding((Px 14),0,0,0); $b.Cursor=$script:curHand
     $g=New-Glyph $nd[2] (Px 20) $cSideText; if($g){ $b.Image=$g }
     $side.Controls.Add($b); $script:nav[$nd[0]]=$b
     $ny += Px 50
@@ -271,7 +277,7 @@ $pHome=New-Panel; $script:panels['home']=$pHome
 [void](Title-Label $pHome 'Подключение')
 $script:lblStatus=New-Object Windows.Forms.Label; $script:lblStatus.SetBounds((Px 34),(Px 70),(Px 580),(Px 30)); $script:lblStatus.Font=(F 14 'Bold'); $script:lblStatus.TextAlign='MiddleCenter'; $pHome.Controls.Add($script:lblStatus)
 $script:btnConn=New-Object Windows.Forms.Button; $script:btnConn.SetBounds((Px 240),(Px 120),(Px 170),(Px 170)); $script:btnConn.FlatStyle='Flat'; $script:btnConn.FlatAppearance.BorderSize=0; $script:btnConn.ForeColor=$white; $script:btnConn.Font=(F 13 'Bold')
-$script:btnConn.TextImageRelation='ImageAboveText'; $script:btnConn.ImageAlign='MiddleCenter'; $script:btnConn.TextAlign='MiddleCenter'; $script:btnConn.Cursor=[Windows.Forms.Cursors]::Hand
+$script:btnConn.TextImageRelation='ImageAboveText'; $script:btnConn.ImageAlign='MiddleCenter'; $script:btnConn.TextAlign='MiddleCenter'; $script:btnConn.Cursor=$script:curHand
 $gPow=New-Glyph 0xE7E8 (Px 48) $white; if($gPow){ $script:btnConn.Image=$gPow; $script:btnConn.Padding=New-Object Windows.Forms.Padding(0,(Px 20),0,0) }
 $pHome.Controls.Add($script:btnConn)
 $script:lblSrv=New-Object Windows.Forms.Label; $script:lblSrv.SetBounds((Px 34),(Px 310),(Px 580),(Px 24)); $script:lblSrv.Font=(F 11 'Regular'); $script:lblSrv.ForeColor=$cText; $script:lblSrv.TextAlign='MiddleCenter'; $pHome.Controls.Add($script:lblSrv)

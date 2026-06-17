@@ -7,7 +7,7 @@ Remove-Item $dist -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $pkg | Out-Null
 
 # движок + приложение + установщик (БЕЗ geoip/geosite; БЕЗ профилей; БЕЗ sb-config.json — он генерится из активного профиля и палит сервер)
-$files = 'app.ps1','sing-box.exe','wintun.dll','PWDTT.exe','svoboda.ico','install.ps1','uninstall.ps1','Установить.bat','Удалить.bat'
+$files = 'app.ps1','sing-box.exe','wintun.dll','PWDTT.exe','svoboda.ico','run.vbs','register-autostart.ps1','install.ps1','uninstall.ps1','Установить.bat','Удалить.bat'
 foreach ($f in $files) { Copy-Item (Join-Path $src $f) (Join-Path $pkg $f) -Force }
 
 # чистый profiles.json — без чужих ключей (каждый вставляет свою ссылку)

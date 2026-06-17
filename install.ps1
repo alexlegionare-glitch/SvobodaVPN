@@ -13,7 +13,7 @@ $src     = $PSScriptRoot
 $target  = Join-Path $env:LOCALAPPDATA 'SvobodaVPN'
 $appPath = Join-Path $target 'app.ps1'
 $icoPath = Join-Path $target 'svoboda.ico'
-$argLine = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $appPath + '"'
+$vbsPath = Join-Path $target 'run.vbs'
 
 # остановить старую копию + убрать прежний ярлык перед переустановкой
 Get-Process sing-box -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -30,7 +30,7 @@ Write-Host "  -> $target" -ForegroundColor Gray
 Write-Host ""
 
 New-Item -ItemType Directory -Force $target | Out-Null
-$files = 'app.ps1','sing-box.exe','wintun.dll','profiles.json','PWDTT.exe','svoboda.ico'
+$files = 'app.ps1','sing-box.exe','wintun.dll','profiles.json','PWDTT.exe','svoboda.ico','run.vbs','register-autostart.ps1'
 foreach ($f in $files) {
     $sp = Join-Path $src $f
     if (Test-Path $sp) { Copy-Item $sp (Join-Path $target $f) -Force; Write-Host "  + $f" -ForegroundColor DarkGray }
@@ -41,7 +41,7 @@ foreach ($f in $files) {
 $ws = New-Object -ComObject WScript.Shell
 function New-Lnk($path) {
     $l = $ws.CreateShortcut($path)
-    $l.TargetPath = 'powershell.exe'; $l.Arguments = $argLine; $l.WorkingDirectory = $target
+    $l.TargetPath = 'wscript.exe'; $l.Arguments = ('"' + $vbsPath + '"'); $l.WorkingDirectory = $target
     if (Test-Path $icoPath) { $l.IconLocation = $icoPath } else { $l.IconLocation = "$env:SystemRoot\System32\shell32.dll,13" }
     $l.WindowStyle = 7; $l.Save()
 }
@@ -50,7 +50,7 @@ New-Lnk (Join-Path ([Environment]::GetFolderPath('Programs')) 'Свобода VP
 
 # автозапуск при входе в Windows — Планировщик задач (повышенные права → без окна UAC при логине)
 try {
-    $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argLine
+    $action    = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + $vbsPath + '"')
     $trigger   = New-ScheduledTaskTrigger -AtLogOn
     $principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -RunLevel Highest -LogonType Interactive
     $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
