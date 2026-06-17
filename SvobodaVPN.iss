@@ -38,11 +38,11 @@ Name: "{group}\Свобода VPN";         Filename: "powershell.exe"; Paramete
 Name: "{group}\Удалить Свобода VPN";  Filename: "{uninstallexe}"
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register-autostart.ps1"""; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\register-autostart.ps1"""; Flags: runhidden waituntilterminated
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\app.ps1"""; Description: "Запустить «Свобода VPN»"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register-autostart.ps1"" -Remove"; Flags: runhidden; RunOnceId: "delTask"
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\register-autostart.ps1"" -Remove"; Flags: runhidden; RunOnceId: "delTask"
 Filename: "taskkill.exe"; Parameters: "/im sing-box.exe /f"; Flags: runhidden; RunOnceId: "killSb"
 
 [Code]
