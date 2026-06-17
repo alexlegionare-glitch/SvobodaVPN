@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Свобода VPN — обход блокировок</title>
+<style>
+:root{--bg:#f1f5f9;--card:#ffffff;--card2:#eef2ff;--text:#1e293b;--sub:#64748b;--accent:#4f46e5;--accent2:#6366f1;--green:#16a34a;--red:#dc2626;--amber:#f59e0b;--border:#e2e8f0}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;line-height:1.55;padding:0 16px 60px}
+.wrap{max-width:720px;margin:0 auto}
+header{text-align:center;padding:48px 0 24px}
+.logo{font-weight:800;font-size:52px;letter-spacing:-1px;color:var(--accent);line-height:1}
+.logo span{color:var(--text)}
+.tag{color:var(--sub);font-size:17px;margin-top:14px;font-weight:500}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;margin:16px 0;box-shadow:0 1px 3px rgba(15,23,42,.06),0 8px 24px rgba(15,23,42,.04)}
+h2{font-size:20px;margin-bottom:6px;color:#0f172a}
+.muted{color:var(--sub);font-size:15px;margin-bottom:16px}
+.dl{margin-top:8px}
+.btn{display:flex;flex-direction:column;align-items:center;gap:4px;text-decoration:none;background:var(--accent);color:#fff;border-radius:14px;padding:18px 20px;font-weight:700;font-size:18px;transition:transform .08s,box-shadow .15s,background .15s;box-shadow:0 6px 18px rgba(79,70,229,.28)}
+.btn:hover{transform:translateY(-2px);background:var(--accent2)}
+.btn small{font-weight:500;font-size:13px;opacity:.9}
+ol,ul{margin:8px 0 8px 22px}
+li{margin:7px 0}
+b{color:#0f172a}
+code{background:#f1f5f9;color:var(--accent);padding:2px 7px;border-radius:6px;font-size:13px;word-break:break-all;border:1px solid var(--border)}
+.tbl{width:100%;border-collapse:collapse;margin-top:10px;font-size:14px}
+.tbl th,.tbl td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+.tbl th{color:var(--accent)}
+.note{background:#fffbeb;border-left:3px solid var(--amber);padding:12px 14px;border-radius:8px;font-size:14px;margin-top:14px;color:#92660a}
+.steps{counter-reset:s;list-style:none;margin-left:0}
+.steps li{counter-increment:s;position:relative;padding-left:40px;margin:12px 0}
+.steps li::before{content:counter(s);position:absolute;left:0;top:-2px;width:28px;height:28px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+details{margin-top:10px;border-top:1px solid var(--border);padding-top:10px}
+summary{cursor:pointer;color:var(--accent);font-weight:600;padding:4px 0}
+.foot{text-align:center;color:var(--sub);font-size:13px;margin-top:30px}
+.pill{display:inline-block;background:var(--card2);color:var(--accent);border-radius:20px;padding:3px 12px;font-size:13px;font-weight:600;margin:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">Свобода<span> VPN</span></div>
+    <div class="tag">обход блокировок и ТСПУ · один клик</div>
+  </header>
+
+  <div class="card">
+    <h2>Скачать</h2>
+    <div class="muted">Windows 10/11. Установка в один клик. После запуска подключается <b>автоматически</b> — новичку делать ничего не нужно.</div>
+    <div class="dl">
+      <a class="btn" href="https://github.com/alexlegionare-glitch/SvobodaVPN/releases/latest/download/SvobodaVPN-Setup.zip">⬇ Скачать Свобода VPN<small>всё в одном · VLESS / Reality / Hysteria2 / TUIC + VK-туннель · ZIP</small></a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Как пользоваться</h2>
+    <ol class="steps">
+      <li>Распакуй скачанный архив и запусти <b>Установить.bat</b>.</li>
+      <li>На рабочем столе появится значок <b>«Свобода VPN»</b> — запусти его, нажми <b>«Да»</b> на запрос системы.</li>
+      <li>Готово — программа <b>сама подключится</b>. Зелёная надпись «Защищено» = всё работает.</li>
+    </ol>
+    <div class="note">💡 Свой сервер: жми <b>«+ Добавить сервер»</b> и вставь ссылку. В <b>продвинутом режиме</b> (ссылка-переключатель внизу окна) появятся «Серверы» со всеми настройками и «Подписка» с авто-обновлением.</div>
+  </div>
+
+  <div class="card">
+    <h2>Не подключается? 3 шага</h2>
+    <ol class="steps">
+      <li><b>Нажми кнопку ещё раз.</b> Блокировка ставится только в момент соединения, и больше половины срабатываний — ложные. Переподключение часто оживляет канал (приложение уже пробует это само).</li>
+      <li><b>Смени сервер</b> или <b>подними свой</b> (раздел ниже). Режут в основном по <b>IP / подсети сервера</b>, а не по протоколу — свежий чистый VPS обходит блок лучше любых настроек.</li>
+      <li><b>Продвинутый режим → «Серверы» → uTLS-отпечаток:</b> переключи <code>chrome</code> ↔ <code>firefox</code>. Смена отпечатка иногда снимает блок.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>Что внутри</h2>
+    <p class="muted">Все актуальные методы обхода в одном окне:</p>
+    <span class="pill">VLESS + Reality</span><span class="pill">TLS no-SNI</span><span class="pill">Hysteria2</span><span class="pill">TUIC</span><span class="pill">Trojan</span><span class="pill">Shadowsocks</span><span class="pill">VMess</span><span class="pill">VK-туннель</span>
+    <table class="tbl">
+      <tr><th>Кнопка</th><th>Что делает</th></tr>
+      <tr><td>Большая круглая</td><td>включить / выключить VPN</td></tr>
+      <tr><td>Серверы</td><td>добавить сервер + <b>все настройки</b>: протокол, транспорт, маскировка uTLS, Reality, mux — выбираешь сам, что включить</td></tr>
+      <tr><td>Подписка</td><td>авто-обновление списка серверов (как у платных)</td></tr>
+      <tr><td>VK-туннель</td><td>когда строгий белый список рубит всё</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Свой VPN с нуля — для новичка</h2>
+    <div class="muted">Без знаний и без копания в настройках. Купил VPS → вставил одну команду → скопировал ссылку. ~10 минут, ~150–300 ₽/мес.</div>
+    <ol class="steps">
+      <li>Купи <b>VPS за рубежом</b> (ОС <b>Ubuntu 22 или 24</b>, доступ root). Дёшево: Aeza, Hetzner, 4VPS, PQ.Hosting. Запиши <b>IP</b> и <b>пароль root</b>.</li>
+      <li>В панели хостера открой <b>веб-консоль</b> сервера (кнопка Console / VNC) или подключись по SSH.</li>
+      <li>Вставь <b>одну команду</b> и нажми Enter:
+        <br><code>bash &lt;(curl -fsSL https://raw.githubusercontent.com/alexlegionare-glitch/SvobodaVPN/main/setup.sh)</code></li>
+      <li>Через минуту скрипт напишет <b>готовую ссылку</b> вида <code>vless://…#Мой сервер</code> — скопируй её.</li>
+      <li>В приложении <b>«Свобода ВПН» → Серверы → вставь ссылку → Добавить</b> → выбери и подключись.</li>
+    </ol>
+    <div class="note">💡 Скрипт сам ставит сервер (sing-box), делает сертификат и настраивает обход ТСПУ (VLESS + TLS без SNI). Тебе остаётся только вставить ссылку в приложение.</div>
+    <details>
+      <summary>Продвинутым: вручную / подписка / выдать ключ другим</summary>
+      <ul>
+        <li><b>Вручную:</b> панель 3X-UI — <code>bash &lt;(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)</code>, создать VLESS+Reality, скопировать ссылку.</li>
+        <li><b>Выдать ключ другому:</b> добавь нового клиента (UUID) в инбаунд, отдай его персональную ссылку.</li>
+        <li><b>Подписка с ротацией</b> (как у платных): отдавай файл-список ссылок по HTTPS, URL вставляется в «Подписка» — мёртвые узлы меняются на живые.</li>
+      </ul>
+    </details>
+  </div>
+
+  <div class="foot">Свобода VPN · для личного использования · без логов</div>
+</div>
+</body>
+</html>
