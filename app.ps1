@@ -208,6 +208,7 @@ $script:form=New-Object Windows.Forms.Form
 $script:form.FormBorderStyle='None'; $script:form.StartPosition='CenterScreen'; $script:form.AutoScaleMode='None'
 $script:form.Size=New-Object Drawing.Size((Px 460),(Px 548)); $script:form.BackColor=$cBg
 $script:form.ShowInTaskbar=$true; $script:form.Text='Свобода VPN'
+$icoFile=Join-Path $root 'svoboda.ico'; if(Test-Path $icoFile){ try { $script:form.Icon=New-Object Drawing.Icon $icoFile } catch {} }
 $semi=[Drawing.FontStyle]::Bold
 $dragH={ param($s,$e) if($e.Button -eq 'Left'){ [W32]::ReleaseCapture(); [W32]::SendMessage($script:form.Handle,0xA1,0x2,0) } }
 
