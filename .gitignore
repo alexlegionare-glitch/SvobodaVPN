@@ -10,6 +10,9 @@
 !/build-dist.ps1
 !/setup.sh
 !/svoboda.ico
+!/SvobodaVPN.iss
+!/register-autostart.ps1
+!/profiles.empty.json
 !/Установить.bat
 !/Удалить.bat
 !/docs/

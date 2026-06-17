@@ -6,10 +6,12 @@
 
 ## Установка
 
-1. Скачайте **[SvobodaVPN-Setup.zip](https://github.com/alexlegionare-glitch/SvobodaVPN/releases/latest/download/SvobodaVPN-Setup.zip)** из релизов.
-2. Распакуйте и запустите **`Установить.bat`**.
-3. На рабочем столе появится ярлык — запустите, подтвердите UAC.
-4. Нажмите **«+ Добавить сервер»**, вставьте свою ссылку (`vless://`, `hysteria2://`, …) и нажмите большую кнопку.
+1. Скачайте **[SvobodaVPN-Setup.exe](https://github.com/alexlegionare-glitch/SvobodaVPN/releases/latest/download/SvobodaVPN-Setup.exe)** из релизов.
+2. Запустите его, подтвердите UAC («Да») — обычный мастер установки.
+3. На рабочем столе появится ярлык «Свобода VPN»; VPN будет запускаться сам при входе в Windows.
+4. Откройте ярлык, нажмите **«+ Добавить сервер»**, вставьте свою ссылку (`vless://`, `hysteria2://`, …) и нажмите большую кнопку.
+
+(Есть и портативный вариант — [SvobodaVPN-Setup.zip](https://github.com/alexlegionare-glitch/SvobodaVPN/releases/latest/download/SvobodaVPN-Setup.zip): распаковать и запустить `Установить.bat`.)
 
 Два режима (переключатель внизу окна):
 - **Обычный** — кнопка вкл/выкл + «Добавить сервер». Для новичка.
